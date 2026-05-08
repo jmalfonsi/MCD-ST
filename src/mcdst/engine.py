@@ -88,7 +88,7 @@ def propose_mapping_workdir(
 
 
 def apply_review_workdir(workdir: Path, decisions_path: Path, registry_path: Path | None = None) -> dict:
-    mapping = read_yaml(workdir / "mapping_propose.yaml")
+    mapping = review_base_mapping(workdir)
     profiles = read_json(workdir / "profiles.json")
     decisions = read_yaml(decisions_path)
     validated = apply_review_decisions(mapping, decisions, profiles)
@@ -99,7 +99,37 @@ def apply_review_workdir(workdir: Path, decisions_path: Path, registry_path: Pat
             "column_mappings_count": len(registry.get("column_mappings", [])),
         }
     write_yaml(workdir / "mapping_valide.yaml", validated)
+    write_json(workdir / "join_rules.json", validated.get("join_rules", []))
+    write_yaml(workdir / "review_queue.yaml", build_review_template(validated))
     return validated
+
+
+def review_base_mapping(workdir: Path) -> dict:
+    draft = read_yaml(workdir / "mapping_propose.yaml")
+    validated_path = workdir / "mapping_valide.yaml"
+    review_queue_path = workdir / "review_queue.yaml"
+    if not validated_path.exists() or not review_queue_path.exists():
+        return draft
+
+    validated = read_yaml(validated_path)
+    current_queue = read_yaml(review_queue_path)
+    if review_queue_signature(current_queue) == review_queue_signature(build_review_template(validated)):
+        return validated
+    return draft
+
+
+def review_queue_signature(review_queue: dict) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    value_ids = [
+        item["id"]
+        for group in review_queue.get("pending_value_mappings", [])
+        for item in group.get("mappings", [])
+        if item.get("suggested_action") == "review" or item.get("status") == "a_revoir"
+    ]
+    return (
+        tuple(sorted(item["id"] for item in review_queue.get("pending_column_mappings", []))),
+        tuple(sorted(value_ids)),
+        tuple(sorted(item["id"] for item in review_queue.get("pending_join_rules", []))),
+    )
 
 
 def apply_mapping_file(mapping_path: Path, exports_dir: Path, output_dir: Path) -> dict:

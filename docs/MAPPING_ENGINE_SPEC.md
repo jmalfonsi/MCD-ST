@@ -134,6 +134,15 @@ Le MVP distingue deux niveaux :
 
 Une jointure entre deux sources événementielles qui partagent seulement une clé travailleur doit rester en revue, même si le recouvrement technique est parfait.
 
+Les règles utilisables par la transformation sont volontairement plus strictes que les règles détectées :
+
+- statut `auto_validable` ou `validated_by_human_review` ;
+- type `primary_foreign_key` ;
+- cardinalité `one_to_one` ou `one_to_many` ;
+- index primaire non ambigu.
+
+Les jointures `many_to_many` et les recouvrements pairs restent des informations de revue ou de qualité, pas des règles de résolution automatique.
+
 ### 5. Inférence des entités
 
 Chaque fichier, onglet ou sous-ensemble est rapproché d'entités MCD-ST probables :
@@ -293,6 +302,8 @@ Cette mémoire sert à réduire la revue répétitive :
 
 Le dry-run applique le mapping sur les exports sources et produit les tables MCD-ST.
 
+La transformation construit aussi un contexte de jointures validées. Ce contexte résout les clés de référence depuis la source étrangère vers la source primaire, par exemple une clé travailleur d'un export d'actes vers l'export individus, ou un établissement d'un export DUERP vers l'export structures. Le rapport qualité expose un résumé `join_resolution` avec le nombre de règles utilisables, de résolutions tentées, réussies et non résolues.
+
 Le rapport qualité vérifie au minimum :
 
 - complétude des champs obligatoires ;
@@ -352,6 +363,7 @@ Le moteur de mapping MVP est considéré acceptable si :
 - il bloque les champs S4 avant génération des tables MCD-ST ;
 - il sépare revue de colonnes et revue de valeurs ;
 - il applique les décisions de revue sur les valeurs de nomenclature ;
+- il applique les règles de jointure validées pour résoudre les clés de référence utilisées dans les tables MCD-ST ;
 - il génère au moins les tables `travailleur`, `entreprise`, `etablissement`, `unite_travail`, `episode_poste`, `visite_sante_travail`, `conclusion_medicale`, `exposition_professionnelle`, `examen_complementaire`, `pathologie_atmp`, `arret_travail`, `vaccination` et `risque_unite_travail` en dry-run ;
 - il signale les valeurs inconnues de nomenclature ;
 - il produit un rapport qualité avant et après revue ;

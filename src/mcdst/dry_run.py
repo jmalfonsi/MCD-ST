@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from mcdst.joins import build_join_context, join_resolution_summary, source_key_value
 from mcdst.quality import (
     check_blocked_fields,
     check_join_candidates,
     check_join_coverage,
+    check_join_resolution,
     check_join_rules,
     check_mapping_source_columns,
     check_required_mappings,
@@ -33,21 +35,22 @@ def dry_run_transform(mapping: dict, exports_dir: Path, output_dir: Path) -> dic
         }
         for entity, payload in mapping["entities"].items()
     }
+    join_context = build_join_context(mapping, exports_dir)
     tables = {}
 
     tables["travailleur"] = build_travailleurs(entity_maps, exports_dir)
     tables["entreprise"] = build_entreprises(entity_maps, exports_dir)
     tables["etablissement"] = build_etablissements(entity_maps, exports_dir)
-    tables["unite_travail"] = build_unites_travail(entity_maps, exports_dir)
-    tables["episode_poste"] = build_episodes_poste(entity_maps, exports_dir)
-    tables["visite_sante_travail"] = build_visites(entity_maps, exports_dir)
-    tables["conclusion_medicale"] = build_conclusions(entity_maps, exports_dir)
-    tables["exposition_professionnelle"] = build_expositions(entity_maps, exports_dir)
-    tables["examen_complementaire"] = build_examens_complementaires(entity_maps, exports_dir)
-    tables["pathologie_atmp"] = build_pathologies_atmp(entity_maps, exports_dir)
-    tables["arret_travail"] = build_arrets_travail(entity_maps, exports_dir)
-    tables["vaccination"] = build_vaccinations(entity_maps, exports_dir)
-    tables["risque_unite_travail"] = build_risques_unite_travail(entity_maps, exports_dir)
+    tables["unite_travail"] = build_unites_travail(entity_maps, exports_dir, join_context)
+    tables["episode_poste"] = build_episodes_poste(entity_maps, exports_dir, join_context)
+    tables["visite_sante_travail"] = build_visites(entity_maps, exports_dir, join_context)
+    tables["conclusion_medicale"] = build_conclusions(entity_maps, exports_dir, join_context)
+    tables["exposition_professionnelle"] = build_expositions(entity_maps, exports_dir, join_context)
+    tables["examen_complementaire"] = build_examens_complementaires(entity_maps, exports_dir, join_context)
+    tables["pathologie_atmp"] = build_pathologies_atmp(entity_maps, exports_dir, join_context)
+    tables["arret_travail"] = build_arrets_travail(entity_maps, exports_dir, join_context)
+    tables["vaccination"] = build_vaccinations(entity_maps, exports_dir, join_context)
+    tables["risque_unite_travail"] = build_risques_unite_travail(entity_maps, exports_dir, join_context)
 
     for name, rows in tables.items():
         write_csv(output_dir / f"{name}.csv", rows)
@@ -60,6 +63,7 @@ def dry_run_transform(mapping: dict, exports_dir: Path, output_dir: Path) -> dic
             "review_queue_count": len(mapping["review_queue"]),
             "join_candidates_count": len(mapping["join_candidates"]),
             "join_rules_count": len(mapping.get("join_rules", [])),
+            "join_resolution": join_resolution_summary(join_context),
             "value_mapping_groups_count": len(mapping["value_mappings"]),
             "output_dir": str(output_dir),
         },
@@ -70,6 +74,7 @@ def dry_run_transform(mapping: dict, exports_dir: Path, output_dir: Path) -> dic
     quality["rules"].extend(check_value_mapping_reviews(mapping))
     quality["rules"].extend(check_join_candidates(mapping))
     quality["rules"].extend(check_join_rules(mapping))
+    quality["rules"].extend(check_join_resolution(quality["summary"]["join_resolution"]))
     quality["rules"].extend(check_join_coverage(tables))
     quality["rules"].extend(check_blocked_fields(mapping))
     return {"tables": tables, "quality": quality}
@@ -138,13 +143,20 @@ def build_etablissements(entity_maps: dict, exports_dir: Path) -> list[dict]:
     return list(out.values())
 
 
-def build_unites_travail(entity_maps: dict, exports_dir: Path) -> list[dict]:
+def build_unites_travail(entity_maps: dict, exports_dir: Path, join_context: dict) -> list[dict]:
+    source_file = entity_source_file(entity_maps, "unite_travail")
     rows = read_entity_source(entity_maps, "unite_travail", exports_dir)
     fields = entity_maps.get("unite_travail", {}).get("fields", {})
     out = {}
     for row in rows:
         unit_source = row.get(fields.get("unite_travail_id", ""), "")
-        et_source = row.get(fields.get("etablissement_id", ""), "")
+        et_source = source_key_value(
+            join_context,
+            source_file,
+            row,
+            "etablissement_id",
+            fields.get("etablissement_id", ""),
+        )
         if not unit_source:
             continue
         uid = hash_id("UT", f"{et_source}|{unit_source}")
@@ -159,16 +171,29 @@ def build_unites_travail(entity_maps: dict, exports_dir: Path) -> list[dict]:
     return list(out.values())
 
 
-def build_episodes_poste(entity_maps: dict, exports_dir: Path) -> list[dict]:
+def build_episodes_poste(entity_maps: dict, exports_dir: Path, join_context: dict) -> list[dict]:
+    source_file = entity_source_file(entity_maps, "episode_poste")
     rows = read_entity_source(entity_maps, "episode_poste", exports_dir)
     fields = entity_maps.get("episode_poste", {}).get("fields", {})
     out = []
     for index, row in enumerate(rows, start=1):
-        worker = row.get(fields.get("travailleur_id", ""), "")
+        worker = source_key_value(
+            join_context,
+            source_file,
+            row,
+            "travailleur_id",
+            fields.get("travailleur_id", ""),
+        )
         job = row.get(fields.get("intitule_poste_source", ""), "")
         if not worker or not job:
             continue
-        et_source = row.get(fields.get("etablissement_id", ""), "")
+        et_source = source_key_value(
+            join_context,
+            source_file,
+            row,
+            "etablissement_id",
+            fields.get("etablissement_id", ""),
+        )
         unit_source = row.get(fields.get("unite_travail_id", ""), "")
         out.append(
             {
@@ -187,12 +212,19 @@ def build_episodes_poste(entity_maps: dict, exports_dir: Path) -> list[dict]:
     return out
 
 
-def build_visites(entity_maps: dict, exports_dir: Path) -> list[dict]:
+def build_visites(entity_maps: dict, exports_dir: Path, join_context: dict) -> list[dict]:
+    source_file = entity_source_file(entity_maps, "visite_sante_travail")
     rows = read_entity_source(entity_maps, "visite_sante_travail", exports_dir)
     fields = entity_maps.get("visite_sante_travail", {}).get("fields", {})
     out = []
     for row in rows:
-        worker = row.get(fields.get("travailleur_id", ""), "")
+        worker = source_key_value(
+            join_context,
+            source_file,
+            row,
+            "travailleur_id",
+            fields.get("travailleur_id", ""),
+        )
         visit_date = row.get(fields.get("date_visite", ""), "")
         visit_type = row.get(fields.get("type_visite_concept_id", ""), "")
         if not worker or not visit_date:
@@ -212,13 +244,20 @@ def build_visites(entity_maps: dict, exports_dir: Path) -> list[dict]:
     return out
 
 
-def build_conclusions(entity_maps: dict, exports_dir: Path) -> list[dict]:
+def build_conclusions(entity_maps: dict, exports_dir: Path, join_context: dict) -> list[dict]:
+    source_file = entity_source_file(entity_maps, "conclusion_medicale")
     rows = read_entity_source(entity_maps, "conclusion_medicale", exports_dir)
     visit_fields = entity_maps.get("visite_sante_travail", {}).get("fields", {})
     fields = entity_maps.get("conclusion_medicale", {}).get("fields", {})
     out = []
     for row in rows:
-        worker = row.get(visit_fields.get("travailleur_id", ""), "")
+        worker = source_key_value(
+            join_context,
+            source_file,
+            row,
+            "travailleur_id",
+            visit_fields.get("travailleur_id", ""),
+        )
         visit_date = row.get(visit_fields.get("date_visite", ""), "")
         visit_type = row.get(visit_fields.get("type_visite_concept_id", ""), "")
         if not worker or not visit_date:
@@ -240,12 +279,19 @@ def build_conclusions(entity_maps: dict, exports_dir: Path) -> list[dict]:
     return out
 
 
-def build_expositions(entity_maps: dict, exports_dir: Path) -> list[dict]:
+def build_expositions(entity_maps: dict, exports_dir: Path, join_context: dict) -> list[dict]:
+    source_file = entity_source_file(entity_maps, "exposition_professionnelle")
     rows = read_entity_source(entity_maps, "exposition_professionnelle", exports_dir)
     fields = entity_maps.get("exposition_professionnelle", {}).get("fields", {})
     out = []
     for index, row in enumerate(rows, start=1):
-        worker = row.get(fields.get("travailleur_id", ""), "")
+        worker = source_key_value(
+            join_context,
+            source_file,
+            row,
+            "travailleur_id",
+            fields.get("travailleur_id", ""),
+        )
         exposure = row.get(fields.get("exposition_concept_id", ""), "")
         if not worker or not exposure:
             continue
@@ -266,12 +312,19 @@ def build_expositions(entity_maps: dict, exports_dir: Path) -> list[dict]:
     return out
 
 
-def build_examens_complementaires(entity_maps: dict, exports_dir: Path) -> list[dict]:
+def build_examens_complementaires(entity_maps: dict, exports_dir: Path, join_context: dict) -> list[dict]:
+    source_file = entity_source_file(entity_maps, "examen_complementaire")
     rows = read_entity_source(entity_maps, "examen_complementaire", exports_dir)
     fields = entity_maps.get("examen_complementaire", {}).get("fields", {})
     out = []
     for index, row in enumerate(rows, start=1):
-        worker = row.get(fields.get("travailleur_id", ""), "")
+        worker = source_key_value(
+            join_context,
+            source_file,
+            row,
+            "travailleur_id",
+            fields.get("travailleur_id", ""),
+        )
         exam_date = row.get(fields.get("date_examen", ""), "")
         exam_type = row.get(fields.get("examen_type_concept_id", ""), "")
         if not worker or not exam_date or not exam_type:
@@ -292,12 +345,19 @@ def build_examens_complementaires(entity_maps: dict, exports_dir: Path) -> list[
     return out
 
 
-def build_pathologies_atmp(entity_maps: dict, exports_dir: Path) -> list[dict]:
+def build_pathologies_atmp(entity_maps: dict, exports_dir: Path, join_context: dict) -> list[dict]:
+    source_file = entity_source_file(entity_maps, "pathologie_atmp")
     rows = read_entity_source(entity_maps, "pathologie_atmp", exports_dir)
     fields = entity_maps.get("pathologie_atmp", {}).get("fields", {})
     out = []
     for index, row in enumerate(rows, start=1):
-        worker = row.get(fields.get("travailleur_id", ""), "")
+        worker = source_key_value(
+            join_context,
+            source_file,
+            row,
+            "travailleur_id",
+            fields.get("travailleur_id", ""),
+        )
         event_date = row.get(fields.get("date_evenement", ""), "")
         event_type = row.get(fields.get("type_evenement", ""), "")
         if not worker or not event_date or not event_type:
@@ -318,12 +378,19 @@ def build_pathologies_atmp(entity_maps: dict, exports_dir: Path) -> list[dict]:
     return out
 
 
-def build_arrets_travail(entity_maps: dict, exports_dir: Path) -> list[dict]:
+def build_arrets_travail(entity_maps: dict, exports_dir: Path, join_context: dict) -> list[dict]:
+    source_file = entity_source_file(entity_maps, "arret_travail")
     rows = read_entity_source(entity_maps, "arret_travail", exports_dir)
     fields = entity_maps.get("arret_travail", {}).get("fields", {})
     out = []
     for index, row in enumerate(rows, start=1):
-        worker = row.get(fields.get("travailleur_id", ""), "")
+        worker = source_key_value(
+            join_context,
+            source_file,
+            row,
+            "travailleur_id",
+            fields.get("travailleur_id", ""),
+        )
         start_date = row.get(fields.get("date_debut", ""), "")
         if not worker or not start_date:
             continue
@@ -342,12 +409,19 @@ def build_arrets_travail(entity_maps: dict, exports_dir: Path) -> list[dict]:
     return out
 
 
-def build_vaccinations(entity_maps: dict, exports_dir: Path) -> list[dict]:
+def build_vaccinations(entity_maps: dict, exports_dir: Path, join_context: dict) -> list[dict]:
+    source_file = entity_source_file(entity_maps, "vaccination")
     rows = read_entity_source(entity_maps, "vaccination", exports_dir)
     fields = entity_maps.get("vaccination", {}).get("fields", {})
     out = []
     for index, row in enumerate(rows, start=1):
-        worker = row.get(fields.get("travailleur_id", ""), "")
+        worker = source_key_value(
+            join_context,
+            source_file,
+            row,
+            "travailleur_id",
+            fields.get("travailleur_id", ""),
+        )
         vaccine = row.get(fields.get("vaccin_concept_id", ""), "")
         if not worker or not vaccine:
             continue
@@ -366,12 +440,19 @@ def build_vaccinations(entity_maps: dict, exports_dir: Path) -> list[dict]:
     return out
 
 
-def build_risques_unite_travail(entity_maps: dict, exports_dir: Path) -> list[dict]:
+def build_risques_unite_travail(entity_maps: dict, exports_dir: Path, join_context: dict) -> list[dict]:
+    source_file = entity_source_file(entity_maps, "risque_unite_travail")
     rows = read_entity_source(entity_maps, "risque_unite_travail", exports_dir)
     fields = entity_maps.get("risque_unite_travail", {}).get("fields", {})
     out = []
     for index, row in enumerate(rows, start=1):
-        et_source = row.get(fields.get("etablissement_id", ""), "")
+        et_source = source_key_value(
+            join_context,
+            source_file,
+            row,
+            "etablissement_id",
+            fields.get("etablissement_id", ""),
+        )
         unit_source = row.get(fields.get("unite_travail_id", ""), "")
         risk = row.get(fields.get("risque_concept_id", ""), "")
         if not et_source or not unit_source or not risk:
@@ -397,3 +478,7 @@ def read_entity_source(entity_maps: dict, entity: str, exports_dir: Path) -> lis
     if not source_file:
         return []
     return read_source_rows(exports_dir, source_file)
+
+
+def entity_source_file(entity_maps: dict, entity: str) -> str:
+    return entity_maps.get(entity, {}).get("source_file", "")

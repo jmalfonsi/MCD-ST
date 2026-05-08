@@ -111,6 +111,25 @@ def check_join_rules(mapping: dict) -> list[dict]:
     ]
 
 
+def check_join_resolution(join_resolution: dict) -> list[dict]:
+    attempted = join_resolution.get("attempted_count", 0)
+    resolved = join_resolution.get("resolved_count", 0)
+    missed = join_resolution.get("missed_count", 0)
+    duplicate_indexes = join_resolution.get("index_diagnostics", [])
+    status = "failed" if duplicate_indexes else "passed"
+    return [
+        {
+            "rule": "source_graph:join_resolution",
+            "severity": "alerte" if status == "failed" else "info",
+            "status": status,
+            "message": (
+                f"{resolved}/{attempted} key values resolved through explicit join rules; "
+                f"{missed} unresolved; {len(duplicate_indexes)} ambiguous primary indexes."
+            ),
+        }
+    ]
+
+
 def check_join_coverage(tables: dict) -> list[dict]:
     travailleur_ids = {row["travailleur_id"] for row in tables.get("travailleur", [])}
     rules = []

@@ -125,6 +125,7 @@ class MCDSTRequestHandler(BaseHTTPRequestHandler):
                     "blocked_s4": len(mapping["blocked_fields"]),
                     "join_candidates": len(mapping["join_candidates"]),
                     "join_rules": len(mapping.get("join_rules", [])),
+                    "review_joins": count_pending_join_rules(mapping.get("join_rules", [])),
                     "review_columns": len(mapping["review_queue"]),
                     "review_values": count_pending_value_mappings(result["review_queue"]["pending_value_mappings"]),
                     "registry_column_mappings": len(result["registry"].get("column_mappings", [])),
@@ -153,6 +154,7 @@ class MCDSTRequestHandler(BaseHTTPRequestHandler):
                     "review_status": validated["review_status"],
                     "review_columns": len(validated["review_queue"]),
                     "review_values": count_pending_value_mappings(validated["value_mappings"]),
+                    "review_joins": count_pending_join_rules(validated.get("join_rules", [])),
                     "value_mapping_groups": len(validated["value_mappings"]),
                     "registry_column_mappings": validated.get("learning_registry", {}).get("column_mappings_count", 0),
                 },
@@ -276,6 +278,10 @@ def count_pending_value_mappings(groups: list[dict]) -> int:
         for item in group.get("mappings", [])
         if item.get("status") == "a_revoir"
     )
+
+
+def count_pending_join_rules(join_rules: list[dict]) -> int:
+    return sum(1 for rule in join_rules if rule.get("status") == "a_revoir")
 
 
 def list_cohort_definitions(directory: Path) -> list[dict[str, Any]]:

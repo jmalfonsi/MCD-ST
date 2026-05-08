@@ -13,10 +13,11 @@ from mcdst.api import create_server
 from mcdst.cli import main
 from mcdst.cohort import evaluate_cohort_definition
 from mcdst.engine import apply_mapping_file, apply_review_workdir, propose_mapping_workdir
+from mcdst.joins import build_join_context, source_key_value
 from mcdst.learning import build_column_suggestions, build_learning_dataset
 from mcdst.profiling import profile_exports
 from mcdst.registry import load_registry
-from mcdst.utils import write_yaml
+from mcdst.utils import read_source_rows, write_yaml
 
 
 FIXTURE_EXPORTS = Path(__file__).parent / "fixtures" / "mapping_poc_exports"
@@ -134,6 +135,9 @@ def test_mapping_engine_roundtrip(tmp_path):
     assert summary["review_queue_count"] == 0
     assert summary["join_candidates_count"] == 31
     assert summary["join_rules_count"] == 31
+    assert summary["join_resolution"]["usable_rules_count"] == 11
+    assert summary["join_resolution"]["resolved_count"] == 40
+    assert summary["join_resolution"]["missed_count"] == 0
     assert summary["value_mapping_groups_count"] == 11
 
     pending_values = [
@@ -142,6 +146,12 @@ def test_mapping_engine_roundtrip(tmp_path):
     ][0]
     assert pending_values["status"] == "failed"
     assert "4 nomenclature values" in pending_values["message"]
+    join_resolution = [
+        rule for rule in state["quality"]["rules"]
+        if rule["rule"] == "source_graph:join_resolution"
+    ][0]
+    assert join_resolution["status"] == "passed"
+    assert "key values resolved through explicit join rules" in join_resolution["message"]
 
 
 def test_mapping_engine_applies_value_review_decisions(tmp_path):
@@ -167,13 +177,30 @@ def test_mapping_engine_applies_value_review_decisions(tmp_path):
         for item in group["mappings"]
         if item["status"] == "a_revoir"
     ]
+    assert not [rule for rule in validated["join_rules"] if rule["status"] == "a_revoir"]
+
+    write_yaml(decisions_path, approve_no_review_decisions())
+    validated_again = apply_review_workdir(workdir, decisions_path)
+    assert not [
+        item
+        for group in validated_again["value_mappings"]
+        for item in group["mappings"]
+        if item["status"] == "a_revoir"
+    ]
+    assert not [rule for rule in validated_again["join_rules"] if rule["status"] == "a_revoir"]
 
     state = apply_mapping_file(workdir / "mapping_valide.yaml", exports, output)
     pending_values = [
         rule for rule in state["quality"]["rules"]
         if rule["rule"] == "review_queue:pending_value_mappings"
     ][0]
+    join_rules = [
+        rule for rule in state["quality"]["rules"]
+        if rule["rule"] == "source_graph:explicit_join_rules"
+    ][0]
     assert pending_values["status"] == "passed"
+    assert join_rules["status"] == "passed"
+    assert join_rules["message"] == "31 explicit join rules generated."
     assert state["quality"]["summary"]["review_queue_count"] == 0
 
 
@@ -365,6 +392,30 @@ def test_source_graph_contains_explicit_join_rules(tmp_path):
     assert peer_rule["join_type"] == "peer_key_overlap"
     assert peer_rule["primary"] is None
     assert peer_rule["foreign"] is None
+
+
+def test_join_context_resolves_reference_keys_from_validated_rules(tmp_path):
+    exports = copy_fixture_exports(tmp_path / "exports")
+    workdir = tmp_path / "work"
+
+    proposed = propose_mapping_workdir(
+        exports,
+        workdir,
+        source_system="POC_SPSTI_MULTI_EXPORT",
+        schema_version="mcdst-v0.1",
+    )
+    decisions_path = workdir / "review_decisions.yaml"
+    write_yaml(decisions_path, approve_all_review_decisions(proposed["review_queue"]))
+    validated = apply_review_workdir(workdir, decisions_path)
+
+    context = build_join_context(validated, exports)
+    duerp_row = read_source_rows(exports, "export_09_duerp.csv")[0]
+    visit_row = read_source_rows(exports, "export_03_actes.csv")[0]
+
+    assert source_key_value(context, "export_09_duerp.csv", duerp_row, "etablissement_id", "Site") == "E10"
+    assert source_key_value(context, "export_03_actes.csv", visit_row, "travailleur_id", "ClePers") == "S001"
+    assert context["usage"]["resolved"] == 2
+    assert context["usage"]["missed"] == 0
 
 
 def test_mapping_yaml_contract_for_draft_and_reviewed_artifacts(tmp_path):
@@ -735,6 +786,8 @@ def test_mapping_api_roundtrip(tmp_path):
         assert "saveCohortCopy" in app_js
         assert "failedRules" in app_js
         assert "renderJoins" in app_js
+        assert "data-join-review-id" in app_js
+        assert "join_rule_decisions" in app_js
         registry_path = tmp_path / "api_registry.yaml"
         cohort_catalog = api_get(f"{base_url}/api/cohorts")
         assert {cohort["name"] for cohort in cohort_catalog["cohorts"]} >= {
@@ -756,6 +809,7 @@ def test_mapping_api_roundtrip(tmp_path):
         assert proposed["status"] == "proposed"
         assert proposed["summary"]["entities"] == 13
         assert proposed["summary"]["join_rules"] == 31
+        assert proposed["summary"]["review_joins"] == 19
         assert proposed["summary"]["review_columns"] == 2
         assert proposed["summary"]["review_values"] == 4
         assert proposed["summary"]["registry_column_mappings"] == 0
@@ -789,9 +843,15 @@ def test_mapping_api_roundtrip(tmp_path):
         assert reviewed["status"] == "reviewed"
         assert reviewed["summary"]["review_columns"] == 0
         assert reviewed["summary"]["review_values"] == 0
+        assert reviewed["summary"]["review_joins"] == 0
         assert reviewed["summary"]["registry_column_mappings"] == 2
         assert (workdir / "mapping_valide.yaml").exists()
         assert registry_path.exists()
+        reviewed_join_rules = json.loads(
+            api_get_text(f"{base_url}/api/artifact/raw?path={workdir / 'join_rules.json'}")
+        )
+        assert len([rule for rule in reviewed_join_rules if rule["status"] == "a_revoir"]) == 0
+        assert len([rule for rule in reviewed_join_rules if rule["status"] == "validated_by_human_review"]) == 19
 
         learned_workdir = tmp_path / "learned_work"
         learned = api_post(
@@ -900,6 +960,15 @@ def approve_all_column_decisions(review_queue: dict) -> dict:
             for item in review_queue["pending_column_mappings"]
         ],
         "value_mapping_decisions": [],
+        "join_rule_decisions": [],
+    }
+
+
+def approve_no_review_decisions() -> dict:
+    return {
+        "column_mapping_decisions": [],
+        "value_mapping_decisions": [],
+        "join_rule_decisions": [],
     }
 
 
@@ -921,6 +990,17 @@ def approve_all_review_decisions(review_queue: dict) -> dict:
         for group in review_queue["pending_value_mappings"]
         for item in group["mappings"]
         if item["status"] == "a_revoir"
+    ]
+    decisions["join_rule_decisions"] = [
+        {
+            "id": item["id"],
+            "action": "approve",
+            "key_role": item["key_role"],
+            "join_type": item["join_type"],
+            "reviewer": "test",
+            "reason": "Approved in acceptance test.",
+        }
+        for item in review_queue.get("pending_join_rules", [])
     ]
     return decisions
 

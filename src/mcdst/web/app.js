@@ -4,6 +4,7 @@ const state = {
   proposed: null,
   applied: null,
   cohort: null,
+  joinRules: [],
 };
 
 const els = {
@@ -118,9 +119,14 @@ async function runReview() {
     state.artifacts.mapping_valide = reviewed.artifacts.mapping_valide;
     state.artifacts.registry = reviewed.artifacts.registry;
     await loadArtifact(reviewed.artifacts.mapping_valide);
-    updateCounts({ reviewColumns: reviewed.summary.review_columns, reviewValues: reviewed.summary.review_values });
+    await renderJoins();
+    updateCounts({
+      reviewColumns: reviewed.summary.review_columns,
+      reviewValues: reviewed.summary.review_values,
+      reviewJoins: reviewed.summary.review_joins,
+    });
     selectTab("mapping");
-    log(`Mapping valide, memoire locale ${reviewed.summary.registry_column_mappings}`);
+    log(`Mapping valide, jointures a revoir ${reviewed.summary.review_joins}`);
   });
 }
 
@@ -202,6 +208,7 @@ function updateFromPropose() {
     entities: summary.entities,
     reviewColumns: summary.review_columns,
     reviewValues: summary.review_values,
+    reviewJoins: summary.review_joins,
     s4: summary.blocked_s4,
     joins: summary.join_rules,
     suggestions: summary.learning_suggestions,
@@ -283,6 +290,7 @@ async function renderJoins() {
   }
   const artifact = await getJson(`/api/artifact?path=${encodeURIComponent(state.artifacts.join_rules)}`);
   const rules = JSON.parse(artifact.content);
+  state.joinRules = rules;
   const reviewRules = rules.filter((rule) => rule.status === "a_revoir");
   const autoRules = rules.filter((rule) => rule.status === "auto_validable");
   const avgConfidence = rules.length
@@ -303,6 +311,7 @@ async function renderJoins() {
     const foreign = rule.foreign || rule.right || {};
     return `
       <tr>
+        <td>${joinReviewCell(rule)}</td>
         <td>${escapeHtml(rule.key_role || rule.join_type)}</td>
         <td>${escapeHtml(formatJoinSide(primary))}</td>
         <td>${escapeHtml(formatJoinSide(foreign))}</td>
@@ -313,6 +322,16 @@ async function renderJoins() {
       </tr>
     `;
   }).join("");
+}
+
+function joinReviewCell(rule) {
+  if (rule.status !== "a_revoir") return "";
+  return `
+    <label class="value-review">
+      <input type="checkbox" checked data-join-review-id="${escapeHtml(rule.id)}">
+      <span>Valider</span>
+    </label>
+  `;
 }
 
 async function renderSuggestions() {
@@ -422,6 +441,9 @@ function buildReviewDecisions() {
   const approvedValues = new Set(
     [...document.querySelectorAll("[data-value-review-id]:checked")].map((input) => input.dataset.valueReviewId)
   );
+  const approvedJoins = new Set(
+    [...document.querySelectorAll("[data-join-review-id]:checked")].map((input) => input.dataset.joinReviewId)
+  );
   return {
     column_mapping_decisions: (state.reviewQueue.pending_column_mappings || [])
       .filter((item) => approved.has(item.id))
@@ -451,6 +473,17 @@ function buildReviewDecisions() {
           reviewer: "web-local",
           reason: "Validated from local review UI.",
         }))),
+    join_rule_decisions: (state.joinRules || [])
+      .filter((rule) => rule.status === "a_revoir")
+      .filter((rule) => approvedJoins.has(rule.id))
+      .map((rule) => ({
+        id: rule.id,
+        action: "approve",
+        key_role: rule.key_role,
+        join_type: rule.join_type,
+        reviewer: "web-local",
+        reason: "Validated from local join review UI.",
+      })),
   };
 }
 
@@ -459,7 +492,7 @@ function formatJoinSide(side) {
   return `${side.source_file || ""}::${side.column || ""}`;
 }
 
-function updateCounts({ sources, profiles, entities, reviewColumns, reviewValues, s4, joins, suggestions }) {
+function updateCounts({ sources, profiles, entities, reviewColumns, reviewValues, reviewJoins, s4, joins, suggestions }) {
   if (sources !== undefined) document.querySelector("#count-sources").textContent = sources;
   if (profiles !== undefined) document.querySelector("#count-profiles").textContent = profiles;
   if (entities !== undefined) {
@@ -471,8 +504,8 @@ function updateCounts({ sources, profiles, entities, reviewColumns, reviewValues
     document.querySelector("#metric-suggestions").textContent = suggestions;
     markStep("suggestions", suggestions ? "done" : "warn");
   }
-  if (reviewColumns !== undefined || reviewValues !== undefined) {
-    const total = (reviewColumns || 0) + (reviewValues || 0);
+  if (reviewColumns !== undefined || reviewValues !== undefined || reviewJoins !== undefined) {
+    const total = (reviewColumns || 0) + (reviewValues || 0) + (reviewJoins || 0);
     document.querySelector("#count-review").textContent = total;
     document.querySelector("#metric-review").textContent = total;
     markStep("review", total ? "warn" : "done");
