@@ -1,0 +1,5 @@
+ClePers,DateEvenement,TypeEvenement,CodeCIM10,Pathologie,Reconnu
+S001,2023-11-20,ATMP,T92,Sequelle traumatisme membre superieur,non
+S002,2022-09-14,MP,M75,TMS epaule,oui
+S003,2024-04-02,pathologie,M54,Lombalgie,non
+S004,2021-12-05,AT,S62,Fracture main,oui

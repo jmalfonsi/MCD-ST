@@ -1,0 +1,5 @@
+ClePers,DateDebutArret,DateFinArret,TypeArret,LieATMP
+S001,2024-01-12,2024-02-10,AT,oui
+S002,2023-10-01,2023-10-20,maladie,non
+S003,2024-02-03,2024-04-30,maladie,non
+S004,2024-05-20,2024-06-10,AT,oui

@@ -1,0 +1,20 @@
+column_mapping_decisions:
+- id: 854cccf31519
+  action: approve
+  source_file: export_03_actes.csv
+  source_column: Adaptation
+  entity: conclusion_medicale
+  target_field: amenagement_flag
+  transform: to_flag
+  reviewer: acceptance-fixture
+  reason: Synthetic POC fixture approval.
+- id: 4820d1b42fca
+  action: approve
+  source_file: export_03_actes.csv
+  source_column: Reserve
+  entity: conclusion_medicale
+  target_field: restriction_flag
+  transform: to_flag
+  reviewer: acceptance-fixture
+  reason: Synthetic POC fixture approval.
+value_mapping_decisions: []

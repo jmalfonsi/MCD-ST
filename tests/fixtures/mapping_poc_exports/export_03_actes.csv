@@ -1,0 +1,5 @@
+ClePers,Jour,Nature,Raison,Decision,Reserve,Adaptation,Intervenant,CR
+S001,2024-02-12,VR,AT > 30 jours,apte avec restrictions,Port de charges <= 5 kg,poste amenage,Medecin du travail,Douleurs lombaires
+S002,2024-03-18,VIP,periodique,apte,,non,Infirmier sante travail,
+S003,2024-05-02,pre reprise,arret long,orientation PDP,,amenagement horaire,Medecin du travail,Situation PDP
+S004,2024-06-14,occasionnelle,demande salarie,avis complementaire,Pas de conduite prolongee,a etudier,Medecin du travail,Fatigue persistante

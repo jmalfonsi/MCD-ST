@@ -1,0 +1,9 @@
+name: travailleurs_45_plus_manutention_auvergne
+reference_year: 2026
+population:
+  min_age: 45
+  region: Auvergne-Rhone-Alpes
+criteria:
+  exposure_concepts:
+    any:
+      - MANUTENTION_MANUELLE

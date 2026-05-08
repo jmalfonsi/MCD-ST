@@ -1,0 +1,5 @@
+ClePers,Vaccin,DateVaccination,StatutVaccinal,RappelPrevu
+S001,DTP,2022-01-15,a_jour,2032-01-15
+S002,Hepatite B,2021-06-20,a_jour,
+S003,Leptospirose,2023-03-10,rappel_a_prevoir,2025-03-10
+S004,DTP,2015-09-12,rappel_a_prevoir,2025-09-12

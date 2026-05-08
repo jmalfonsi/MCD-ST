@@ -1,0 +1,5 @@
+ClePers,DateExamen,TypeExamen,Resultat,Unite,Interpretation
+S001,2024-02-12,IMC,29.4,kg/m2,surpoids
+S002,2024-03-18,Audiogramme,25,dB,alteration_legere
+S003,2024-05-02,Tension systolique,138,mmHg,limite
+S004,2024-06-14,Spirometrie VEMS,82,%,normal

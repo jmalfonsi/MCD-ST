@@ -1,0 +1,25 @@
+name: manutention_avant_restriction_2024
+reference_year: 2026
+population:
+  min_age: 45
+longitudinal:
+  events:
+    exposition_manutention:
+      table: exposition_professionnelle
+      date_field: date_debut
+      filters:
+        exposition_concept_id:
+          any:
+            - MANUTENTION_MANUELLE
+    restriction_medicale:
+      table: conclusion_medicale
+      date_field: visite_sante_travail.date_visite
+      filters:
+        restriction_flag: true
+  sequences:
+    - id: exposition_before_restriction
+      label: Exposition manutention avant restriction médicale
+      first: exposition_manutention
+      then: restriction_medicale
+      relation: before
+      min_days: 0

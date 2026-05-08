@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+.env/
+dist/
+build/
+*.egg-info/
+
+# Prototype outputs.
+prototypes/mapping_poc/_scratch_PROTOTYPE_WIPE_ME/
+work/

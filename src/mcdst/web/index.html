@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MCD-ST</title>
+    <link rel="stylesheet" href="/web/app.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>MCD-ST</h1>
+          <p id="health">API locale</p>
+        </div>
+        <div class="top-actions">
+          <button id="run-propose" type="button">Proposer</button>
+          <button id="run-review" type="button">Valider revue</button>
+          <button id="run-apply" type="button">Appliquer</button>
+        </div>
+      </header>
+
+      <section class="pipeline" aria-label="Pipeline">
+        <button class="step active" type="button" data-tab="sources">
+          <span>RAW</span>
+          <strong id="count-sources">0</strong>
+        </button>
+        <button class="step" type="button" data-tab="profile">
+          <span>Profilage</span>
+          <strong id="count-profiles">0</strong>
+        </button>
+        <button class="step" type="button" data-tab="mapping">
+          <span>Mapping</span>
+          <strong id="count-entities">0</strong>
+        </button>
+        <button class="step" type="button" data-tab="suggestions">
+          <span>Suggestions</span>
+          <strong id="count-suggestions">0</strong>
+        </button>
+        <button class="step" type="button" data-tab="review">
+          <span>Revue</span>
+          <strong id="count-review">0</strong>
+        </button>
+        <button class="step" type="button" data-tab="quality">
+          <span>Qualite</span>
+          <strong id="count-quality">0</strong>
+        </button>
+      </section>
+
+      <section class="workspace">
+        <aside class="sidebar">
+          <label>
+            Exports
+            <input id="exports-path" value="tests/fixtures/mapping_poc_exports">
+          </label>
+          <label>
+            Workdir
+            <input id="workdir-path" value="work/web_mapping">
+          </label>
+          <label>
+            Tables
+            <input id="output-path" value="work/web_mapping/mcdst_tables">
+          </label>
+          <label>
+            Source
+            <input id="source-system" value="POC_SPSTI_MULTI_EXPORT">
+          </label>
+          <label>
+            Registry
+            <input id="registry-path" value="work/mapping_registry.yaml">
+          </label>
+          <label>
+            Modele mapping
+            <input id="learning-model-path" value="work/training/column_model.json">
+          </label>
+          <div class="metrics">
+            <div><span>Entites</span><strong id="metric-entities">0</strong></div>
+            <div><span>S4</span><strong id="metric-s4">0</strong></div>
+            <div><span>Jointures</span><strong id="metric-joins">0</strong></div>
+            <div><span>Suggestions</span><strong id="metric-suggestions">0</strong></div>
+            <div><span>Revue</span><strong id="metric-review">0</strong></div>
+          </div>
+          <ol id="event-log" class="event-log"></ol>
+        </aside>
+
+        <section class="content">
+          <nav class="tabs" aria-label="Vues">
+            <button type="button" class="tab active" data-tab="sources">Sources</button>
+            <button type="button" class="tab" data-tab="profile">Profilage</button>
+            <button type="button" class="tab" data-tab="mapping">YAML</button>
+            <button type="button" class="tab" data-tab="suggestions">Suggestions</button>
+            <button type="button" class="tab" data-tab="review">Revue</button>
+            <button type="button" class="tab" data-tab="quality">Qualite</button>
+          </nav>
+
+          <section id="view-sources" class="view active">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Fichier</th><th>Lignes</th><th>Format</th><th>Entites</th></tr>
+                </thead>
+                <tbody id="source-rows"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="view-profile" class="view">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Source</th><th>Colonne</th><th>Type</th><th>Sensibilite</th><th>Completude</th></tr>
+                </thead>
+                <tbody id="profile-rows"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="view-mapping" class="view">
+            <div class="editor-toolbar">
+              <span id="yaml-path">mapping_propose.yaml</span>
+              <button id="load-yaml" type="button">Ouvrir</button>
+              <button id="save-yaml" type="button">Sauver</button>
+            </div>
+            <textarea id="yaml-editor" spellcheck="false"></textarea>
+          </section>
+
+          <section id="view-suggestions" class="view">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Source</th><th>Colonne</th><th>Cible</th><th>Score</th><th>Statut</th></tr>
+                </thead>
+                <tbody id="suggestion-rows"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="view-review" class="view">
+            <div id="review-columns" class="review-list"></div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Source</th><th>Colonne</th><th>Cible</th><th>Valeurs a revoir</th></tr>
+                </thead>
+                <tbody id="review-values"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="view-quality" class="view">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Regle</th><th>Statut</th><th>Severite</th><th>Message</th></tr>
+                </thead>
+                <tbody id="quality-rows"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+      </section>
+    </main>
+    <script src="/web/app.js"></script>
+  </body>
+</html>
