@@ -17,6 +17,7 @@
           <button id="run-propose" type="button">Proposer</button>
           <button id="run-review" type="button">Valider revue</button>
           <button id="run-apply" type="button">Appliquer</button>
+          <button id="run-cohort" type="button">Cohorte</button>
         </div>
       </header>
 
@@ -33,6 +34,10 @@
           <span>Mapping</span>
           <strong id="count-entities">0</strong>
         </button>
+        <button class="step" type="button" data-tab="joins">
+          <span>Jointures</span>
+          <strong id="count-joins">0</strong>
+        </button>
         <button class="step" type="button" data-tab="suggestions">
           <span>Suggestions</span>
           <strong id="count-suggestions">0</strong>
@@ -44,6 +49,10 @@
         <button class="step" type="button" data-tab="quality">
           <span>Qualite</span>
           <strong id="count-quality">0</strong>
+        </button>
+        <button class="step" type="button" data-tab="cohort">
+          <span>Cohorte</span>
+          <strong id="count-cohort">0</strong>
         </button>
       </section>
 
@@ -73,12 +82,29 @@
             Modele mapping
             <input id="learning-model-path" value="work/training/column_model.json">
           </label>
+          <label>
+            Cohorte
+            <select id="cohort-picker"></select>
+          </label>
+          <label>
+            Definition YAML
+            <input id="cohort-definition-path" value="tests/fixtures/cohorts/manutention_avant_restriction.yaml">
+          </label>
+          <label>
+            Rapport JSON
+            <input id="cohort-report-path" value="work/web_mapping/cohort_report_v02.json">
+          </label>
+          <label>
+            Rapport HTML
+            <input id="cohort-html-path" value="work/web_mapping/cohort_report_v02.html">
+          </label>
           <div class="metrics">
             <div><span>Entites</span><strong id="metric-entities">0</strong></div>
             <div><span>S4</span><strong id="metric-s4">0</strong></div>
             <div><span>Jointures</span><strong id="metric-joins">0</strong></div>
             <div><span>Suggestions</span><strong id="metric-suggestions">0</strong></div>
             <div><span>Revue</span><strong id="metric-review">0</strong></div>
+            <div><span>Inclus</span><strong id="metric-cohort">0</strong></div>
           </div>
           <ol id="event-log" class="event-log"></ol>
         </aside>
@@ -88,9 +114,11 @@
             <button type="button" class="tab active" data-tab="sources">Sources</button>
             <button type="button" class="tab" data-tab="profile">Profilage</button>
             <button type="button" class="tab" data-tab="mapping">YAML</button>
+            <button type="button" class="tab" data-tab="joins">Jointures</button>
             <button type="button" class="tab" data-tab="suggestions">Suggestions</button>
             <button type="button" class="tab" data-tab="review">Revue</button>
             <button type="button" class="tab" data-tab="quality">Qualite</button>
+            <button type="button" class="tab" data-tab="cohort">Cohorte</button>
           </nav>
 
           <section id="view-sources" class="view active">
@@ -124,6 +152,24 @@
             <textarea id="yaml-editor" spellcheck="false"></textarea>
           </section>
 
+          <section id="view-joins" class="view">
+            <div class="quality-summary">
+              <div><span>Total</span><strong id="join-total">0</strong></div>
+              <div><span>À revoir</span><strong id="join-review">0</strong></div>
+              <div><span>Auto</span><strong id="join-auto">0</strong></div>
+              <div><span>Confiance</span><strong id="join-confidence">0</strong></div>
+              <a id="join-json-link" href="#" target="_blank" rel="noreferrer">Règles JSON</a>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Rôle</th><th>Primaire</th><th>Étrangère</th><th>Cardinalité</th><th>Statut</th><th>Score</th><th>Justification</th></tr>
+                </thead>
+                <tbody id="join-rows"></tbody>
+              </table>
+            </div>
+          </section>
+
           <section id="view-suggestions" class="view">
             <div class="table-wrap">
               <table>
@@ -148,6 +194,13 @@
           </section>
 
           <section id="view-quality" class="view">
+            <div class="quality-summary">
+              <div><span>Tables</span><strong id="quality-generated">0</strong></div>
+              <div><span>Règles</span><strong id="quality-rules">0</strong></div>
+              <div><span>Alertes</span><strong id="quality-failed">0</strong></div>
+              <div><span>S4 bloqués</span><strong id="quality-s4">0</strong></div>
+              <a id="quality-json-link" href="#" target="_blank" rel="noreferrer">Rapport JSON</a>
+            </div>
             <div class="table-wrap">
               <table>
                 <thead>
@@ -156,6 +209,49 @@
                 <tbody id="quality-rows"></tbody>
               </table>
             </div>
+          </section>
+
+          <section id="view-cohort" class="view">
+            <div class="editor-toolbar">
+              <span id="cohort-yaml-path">cohort.yaml</span>
+              <button id="load-cohort-yaml" type="button">Ouvrir YAML</button>
+              <button id="save-cohort-copy" type="button">Sauver copie</button>
+            </div>
+            <textarea id="cohort-yaml-editor" class="cohort-editor" spellcheck="false"></textarea>
+            <div class="cohort-summary">
+              <div><span>Statut</span><strong id="cohort-status">-</strong></div>
+              <div><span>Source</span><strong id="cohort-source">0</strong></div>
+              <div><span>Inclus</span><strong id="cohort-included">0</strong></div>
+              <div><span>Diagnostics</span><strong id="cohort-diagnostics">0</strong></div>
+              <a id="cohort-html-link" href="#" target="_blank" rel="noreferrer">Rapport HTML</a>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Etape</th><th>Libelle</th><th>Entree</th><th>Sortie</th><th>Exclus</th><th>Paires</th></tr>
+                </thead>
+                <tbody id="cohort-step-rows"></tbody>
+              </table>
+            </div>
+            <div class="split-tables">
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>Diagnostic</th><th>Severite</th><th>Message</th></tr>
+                  </thead>
+                  <tbody id="cohort-diagnostic-rows"></tbody>
+                </table>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>Evenement</th><th>Table</th><th>Lignes</th><th>Travailleurs</th></tr>
+                  </thead>
+                  <tbody id="cohort-event-rows"></tbody>
+                </table>
+              </div>
+            </div>
+            <iframe id="cohort-report-frame" title="Rapport de cohorte"></iframe>
           </section>
         </section>
       </section>

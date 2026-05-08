@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from html import escape
 from pathlib import Path
 from typing import Any
 
@@ -36,13 +37,19 @@ def evaluate_cohort_definition(
     tables_dir: Path,
     definition_path: Path,
     output_path: Path | None = None,
+    html_output_path: Path | None = None,
 ) -> dict:
     definition = read_yaml(definition_path) or {}
     result = evaluate_cohort(tables_dir, definition)
     result["definition_path"] = str(definition_path)
     if output_path:
         result["summary"]["output_path"] = str(output_path)
+    if html_output_path:
+        result["summary"]["html_output_path"] = str(html_output_path)
+    if output_path:
         write_json(output_path, result)
+    if html_output_path:
+        write_cohort_html_report(html_output_path, result)
     return result
 
 
@@ -50,6 +57,7 @@ def evaluate_cohort(tables_dir: Path, definition: dict[str, Any]) -> dict:
     required_tables = required_tables_for_definition(definition)
     loaded = load_required_tables(tables_dir, required_tables)
     missing_tables = [table for table in required_tables if table not in loaded]
+    diagnostics = build_missing_table_diagnostics(missing_tables)
     availability = [
         {
             "table": table,
@@ -80,12 +88,17 @@ def evaluate_cohort(tables_dir: Path, definition: dict[str, Any]) -> dict:
             steps,
             all_worker_ids,
             set(),
+            diagnostics,
+            empty_longitudinal_summary(),
         )
+
+    diagnostics.extend(build_missing_field_diagnostics(definition, loaded))
 
     eligible = set(all_worker_ids)
     eligible = apply_population_filters(definition, loaded, eligible, steps)
     eligible = apply_criteria_filters(definition, loaded, eligible, steps)
-    eligible = apply_longitudinal_filters(definition, loaded, eligible, steps)
+    eligible, longitudinal = apply_longitudinal_filters(definition, loaded, eligible, steps)
+    diagnostics.extend(build_longitudinal_diagnostics(longitudinal))
     return build_result(
         definition,
         required_tables,
@@ -94,6 +107,8 @@ def evaluate_cohort(tables_dir: Path, definition: dict[str, Any]) -> dict:
         steps,
         all_worker_ids,
         eligible,
+        diagnostics,
+        longitudinal,
     )
 
 
@@ -133,6 +148,127 @@ def load_required_tables(tables_dir: Path, required_tables: list[str]) -> dict[s
         if path.exists():
             tables[table] = read_csv(path)
     return tables
+
+
+def required_fields_for_definition(definition: dict[str, Any]) -> dict[str, set[str]]:
+    required: dict[str, set[str]] = {"travailleur": {"travailleur_id"}}
+    population = definition.get("population", {}) or {}
+    criteria = definition.get("criteria", {}) or {}
+
+    if population.get("min_age") is not None or population.get("max_age") is not None:
+        add_required_fields(required, "travailleur", {"annee_naissance"})
+    if has_value(population.get("sex")):
+        add_required_fields(required, "travailleur", {"sexe"})
+    if has_value(population.get("suivi_type")):
+        add_required_fields(required, "travailleur", {"suivi_type_concept_id"})
+    if has_value(population.get("region")):
+        add_required_fields(required, "etablissement", {"etablissement_id", "region"})
+        add_required_fields(required, "episode_poste", {"travailleur_id", "etablissement_id"})
+
+    if extract_values(criteria, "exposure_concepts", "exposures"):
+        add_required_fields(required, "exposition_professionnelle", {"travailleur_id", "exposition_concept_id"})
+    if extract_values(criteria, "visit_types", "visits"):
+        add_required_fields(required, "visite_sante_travail", {"travailleur_id", "type_visite_concept_id"})
+    if extract_values(criteria, "conclusion_concepts", "conclusions") or criteria.get("flags"):
+        add_required_fields(required, "visite_sante_travail", {"visite_id", "travailleur_id"})
+        add_required_fields(required, "conclusion_medicale", {"visite_id"})
+    if extract_values(criteria, "conclusion_concepts", "conclusions"):
+        add_required_fields(required, "conclusion_medicale", {"conclusion_concept_id"})
+    for field in (criteria.get("flags", {}) or {}):
+        add_required_fields(required, "conclusion_medicale", {str(field)})
+
+    for event in longitudinal_event_definitions(definition).values():
+        table = str(event.get("table") or "")
+        if not table:
+            continue
+        filters = event.get("filters", {}) or {}
+        add_required_fields(required, table, set(filters.keys()))
+        date_field = str(event.get("date_field") or DEFAULT_EVENT_DATE_FIELDS.get(table, "date"))
+        worker_field = str(event.get("worker_field") or "travailleur_id")
+        if table == "conclusion_medicale" or date_field.startswith("visite_sante_travail."):
+            linked_date_field = date_field.split(".", 1)[1] if "." in date_field else date_field
+            add_required_fields(required, table, {"visite_id"})
+            add_required_fields(required, "visite_sante_travail", {"visite_id", "travailleur_id", linked_date_field})
+        else:
+            add_required_fields(required, table, {worker_field, date_field.split(".", 1)[-1]})
+
+    return required
+
+
+def add_required_fields(required: dict[str, set[str]], table: str, fields: set[str]) -> None:
+    required.setdefault(table, set()).update(field for field in fields if field)
+
+
+def build_missing_table_diagnostics(missing_tables: list[str]) -> list[dict[str, Any]]:
+    return [
+        {
+            "severity": "blocking",
+            "code": "missing_table",
+            "table": table,
+            "message": f"Table MCD-ST requise absente: {table}",
+        }
+        for table in missing_tables
+    ]
+
+
+def build_missing_field_diagnostics(
+    definition: dict[str, Any],
+    tables: dict[str, list[dict[str, str]]],
+) -> list[dict[str, Any]]:
+    diagnostics = []
+    for table, fields in sorted(required_fields_for_definition(definition).items()):
+        if table not in tables:
+            continue
+        rows = tables[table]
+        if not rows:
+            diagnostics.append(
+                {
+                    "severity": "warning",
+                    "code": "empty_table",
+                    "table": table,
+                    "message": f"Table MCD-ST disponible mais vide: {table}",
+                }
+            )
+            continue
+        available = set().union(*(row.keys() for row in rows))
+        missing_fields = sorted(field for field in fields if field not in available)
+        for field in missing_fields:
+            diagnostics.append(
+                {
+                    "severity": "blocking",
+                    "code": "missing_field",
+                    "table": table,
+                    "field": field,
+                    "message": f"Champ requis absent: {table}.{field}",
+                }
+            )
+    return diagnostics
+
+
+def build_longitudinal_diagnostics(longitudinal: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    diagnostics = []
+    for event in longitudinal["events"]:
+        if event["records_count"] == 0:
+            diagnostics.append(
+                {
+                    "severity": "warning",
+                    "code": "empty_event",
+                    "event": event["id"],
+                    "table": event["table"],
+                    "message": f"Aucun événement trouvé pour {event['id']}",
+                }
+            )
+    for sequence in longitudinal["sequences"]:
+        if sequence["matched_pairs_count"] == 0:
+            diagnostics.append(
+                {
+                    "severity": "warning",
+                    "code": "temporal_no_match",
+                    "sequence": sequence["id"],
+                    "message": f"Aucune paire temporelle ne valide la séquence {sequence['id']}",
+                }
+            )
+    return diagnostics
 
 
 def apply_population_filters(
@@ -259,15 +395,22 @@ def apply_longitudinal_filters(
     tables: dict[str, list[dict[str, str]]],
     eligible: set[str],
     steps: list[dict],
-) -> set[str]:
+) -> tuple[set[str], dict[str, list[dict[str, Any]]]]:
     event_definitions = longitudinal_event_definitions(definition)
     sequences = longitudinal_sequences(definition)
     if not event_definitions or not sequences:
-        return eligible
+        return eligible, empty_longitudinal_summary()
 
     events_by_name = {
         name: build_event_records(name, event, tables)
         for name, event in event_definitions.items()
+    }
+    longitudinal = {
+        "events": [
+            summarize_event_records(name, event_definitions[name], events_by_name.get(name, []))
+            for name in event_definitions
+        ],
+        "sequences": [],
     }
 
     for index, sequence in enumerate(sequences, start=1):
@@ -297,8 +440,21 @@ def apply_longitudinal_filters(
                 "matched_pairs_count": matched_pairs,
             }
         )
+        longitudinal["sequences"].append(
+            {
+                "id": sequence_id,
+                "label": str(sequence.get("label") or f"{first_name} avant {then_name}"),
+                "first_event": first_name,
+                "then_event": then_name,
+                "relation": str(sequence.get("relation") or "before"),
+                "min_days": optional_int(sequence.get("min_days")),
+                "max_days": optional_int(sequence.get("max_days")),
+                "matched_pairs_count": matched_pairs,
+                "matched_workers_count": len(allowed.intersection(eligible)),
+            }
+        )
 
-    return eligible
+    return eligible, longitudinal
 
 
 def longitudinal_event_definitions(definition: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -348,6 +504,24 @@ def build_event_records(
                 }
             )
     return records
+
+
+def summarize_event_records(
+    name: str,
+    event: dict[str, Any],
+    records: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "id": name,
+        "table": str(event.get("table") or ""),
+        "date_field": str(event.get("date_field") or DEFAULT_EVENT_DATE_FIELDS.get(str(event.get("table") or ""), "")),
+        "records_count": len(records),
+        "workers_count": len({record["travailleur_id"] for record in records}),
+    }
+
+
+def empty_longitudinal_summary() -> dict[str, list[dict[str, Any]]]:
+    return {"events": [], "sequences": []}
 
 
 def event_worker_and_date(
@@ -469,25 +643,203 @@ def build_result(
     steps: list[dict],
     source_worker_ids: set[str],
     included_worker_ids: set[str],
+    diagnostics: list[dict[str, Any]],
+    longitudinal: dict[str, list[dict[str, Any]]],
 ) -> dict:
     included = sorted(included_worker_ids)
     sequences_count = len(longitudinal_sequences(definition))
+    status = feasibility_status(diagnostics, source_worker_ids, included_worker_ids)
     return {
         "cohort_name": definition.get("name", "unnamed_cohort"),
         "schema_version": "mcdst-cohort-v0.2" if sequences_count else "mcdst-cohort-v0.1",
         "summary": {
-            "feasibility_status": "not_feasible" if missing_tables else "feasible",
+            "feasibility_status": status,
             "source_population_count": len(source_worker_ids),
             "included_count": len(included),
             "excluded_count": max(len(source_worker_ids) - len(included), 0),
             "required_tables": required_tables,
             "missing_tables": missing_tables,
             "longitudinal_sequences_count": sequences_count,
+            "diagnostics_count": len(diagnostics),
+            "blocking_diagnostics_count": count_diagnostics(diagnostics, "blocking"),
+            "warning_diagnostics_count": count_diagnostics(diagnostics, "warning"),
+        },
+        "feasibility": {
+            "status": status,
+            "diagnostics": diagnostics,
         },
         "data_availability": availability,
+        "longitudinal": longitudinal,
         "steps": steps,
         "included_travailleurs": included,
     }
+
+
+def feasibility_status(
+    diagnostics: list[dict[str, Any]],
+    source_worker_ids: set[str],
+    included_worker_ids: set[str],
+) -> str:
+    if count_diagnostics(diagnostics, "blocking"):
+        return "not_feasible"
+    if source_worker_ids and not included_worker_ids:
+        return "feasible_empty"
+    return "feasible"
+
+
+def count_diagnostics(diagnostics: list[dict[str, Any]], severity: str) -> int:
+    return sum(1 for diagnostic in diagnostics if diagnostic.get("severity") == severity)
+
+
+def write_cohort_html_report(path: Path, result: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(render_cohort_report_html(result), encoding="utf-8")
+
+
+def render_cohort_report_html(result: dict[str, Any]) -> str:
+    summary = result["summary"]
+    diagnostics = result.get("feasibility", {}).get("diagnostics", [])
+    longitudinal = result.get("longitudinal", empty_longitudinal_summary())
+    title = f"Rapport cohorte - {result['cohort_name']}"
+    return f"""<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>{html_text(title)}</title>
+  <style>
+    :root {{ color-scheme: light; font-family: Arial, sans-serif; }}
+    body {{ margin: 32px; color: #172026; background: #f7f8fa; }}
+    main {{ max-width: 1120px; margin: 0 auto; }}
+    h1, h2 {{ margin: 0 0 12px; }}
+    h1 {{ font-size: 28px; }}
+    h2 {{ font-size: 18px; margin-top: 28px; }}
+    .muted {{ color: #66717a; }}
+    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 18px 0; }}
+    .metric {{ background: white; border: 1px solid #d8dee4; border-radius: 8px; padding: 14px; }}
+    .metric strong {{ display: block; font-size: 24px; margin-top: 6px; }}
+    table {{ width: 100%; border-collapse: collapse; background: white; border: 1px solid #d8dee4; }}
+    th, td {{ border-bottom: 1px solid #e6eaf0; padding: 8px 10px; text-align: left; vertical-align: top; }}
+    th {{ background: #eef2f6; font-size: 13px; }}
+    .status {{ display: inline-block; padding: 3px 8px; border-radius: 999px; background: #e8f5ed; color: #17663a; }}
+    .status.not_feasible {{ background: #fdecec; color: #a32121; }}
+    .status.feasible_empty {{ background: #fff4d6; color: #7a5200; }}
+    .severity-blocking {{ color: #a32121; font-weight: 700; }}
+    .severity-warning {{ color: #8a5a00; font-weight: 700; }}
+  </style>
+</head>
+<body>
+<main>
+  <h1>{html_text(title)}</h1>
+  <p class="muted">Définition: {html_text(result.get("definition_path", ""))}</p>
+  <p>Statut: <span class="status {html_attr(summary["feasibility_status"])}">{html_text(summary["feasibility_status"])}</span></p>
+
+  <section class="grid">
+    {metric("Population source", summary["source_population_count"])}
+    {metric("Inclus", summary["included_count"])}
+    {metric("Exclus", summary["excluded_count"])}
+    {metric("Diagnostics", summary["diagnostics_count"])}
+    {metric("Séquences", summary["longitudinal_sequences_count"])}
+  </section>
+
+  <h2>Étapes de Cohorte</h2>
+  {html_table(result["steps"], [
+      ("id", "Étape"),
+      ("label", "Libellé"),
+      ("input_count", "Entrée"),
+      ("output_count", "Sortie"),
+      ("excluded_count", "Exclus"),
+      ("matched_pairs_count", "Paires"),
+  ])}
+
+  <h2>Diagnostics de Faisabilité</h2>
+  {html_table(diagnostics, [
+      ("severity", "Sévérité"),
+      ("code", "Code"),
+      ("table", "Table"),
+      ("field", "Champ"),
+      ("event", "Événement"),
+      ("sequence", "Séquence"),
+      ("message", "Message"),
+  ], severity_column=True)}
+
+  <h2>Disponibilité des Données</h2>
+  {html_table(result["data_availability"], [
+      ("table", "Table"),
+      ("status", "Statut"),
+      ("row_count", "Lignes"),
+  ])}
+
+  <h2>Événements Longitudinaux</h2>
+  {html_table(longitudinal["events"], [
+      ("id", "Événement"),
+      ("table", "Table"),
+      ("date_field", "Date"),
+      ("records_count", "Lignes"),
+      ("workers_count", "Travailleurs"),
+  ])}
+
+  <h2>Séquences Longitudinales</h2>
+  {html_table(longitudinal["sequences"], [
+      ("id", "Séquence"),
+      ("label", "Libellé"),
+      ("first_event", "Premier"),
+      ("then_event", "Puis"),
+      ("relation", "Relation"),
+      ("min_days", "Min jours"),
+      ("max_days", "Max jours"),
+      ("matched_pairs_count", "Paires"),
+      ("matched_workers_count", "Travailleurs"),
+  ])}
+
+  <h2>Travailleurs Inclus</h2>
+  {included_workers_html(result["included_travailleurs"])}
+</main>
+</body>
+</html>
+"""
+
+
+def metric(label: str, value: Any) -> str:
+    return f'<div class="metric"><span>{html_text(label)}</span><strong>{html_text(value)}</strong></div>'
+
+
+def html_table(
+    rows: list[dict[str, Any]],
+    columns: list[tuple[str, str]],
+    *,
+    severity_column: bool = False,
+) -> str:
+    if not rows:
+        return '<p class="muted">Aucun élément.</p>'
+    header = "".join(f"<th>{html_text(label)}</th>" for _, label in columns)
+    body = []
+    for row in rows:
+        cells = []
+        for key, _ in columns:
+            value = row.get(key, "")
+            css_class = ""
+            if severity_column and key == "severity" and value:
+                css_class = f' class="severity-{html_attr(value)}"'
+            cells.append(f"<td{css_class}>{html_text(value)}</td>")
+        body.append(f"<tr>{''.join(cells)}</tr>")
+    return f"<table><thead><tr>{header}</tr></thead><tbody>{''.join(body)}</tbody></table>"
+
+
+def included_workers_html(worker_ids: list[str]) -> str:
+    if not worker_ids:
+        return '<p class="muted">Aucun travailleur inclus.</p>'
+    rows = [{"travailleur_id": worker_id} for worker_id in worker_ids]
+    return html_table(rows, [("travailleur_id", "Travailleur pseudonymisé")])
+
+
+def html_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return escape(str(value))
+
+
+def html_attr(value: Any) -> str:
+    return normalize(str(value))
 
 
 def extract_values(payload: dict[str, Any], direct_key: str, grouped_key: str) -> list[str]:

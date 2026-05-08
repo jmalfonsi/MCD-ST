@@ -3,6 +3,7 @@ const state = {
   reviewQueue: null,
   proposed: null,
   applied: null,
+  cohort: null,
 };
 
 const els = {
@@ -13,6 +14,13 @@ const els = {
   sourceSystem: document.querySelector("#source-system"),
   registryPath: document.querySelector("#registry-path"),
   learningModelPath: document.querySelector("#learning-model-path"),
+  cohortPicker: document.querySelector("#cohort-picker"),
+  cohortDefinitionPath: document.querySelector("#cohort-definition-path"),
+  cohortReportPath: document.querySelector("#cohort-report-path"),
+  cohortHtmlPath: document.querySelector("#cohort-html-path"),
+  cohortFrame: document.querySelector("#cohort-report-frame"),
+  cohortYamlEditor: document.querySelector("#cohort-yaml-editor"),
+  cohortYamlPath: document.querySelector("#cohort-yaml-path"),
   eventLog: document.querySelector("#event-log"),
   yamlEditor: document.querySelector("#yaml-editor"),
   yamlPath: document.querySelector("#yaml-path"),
@@ -21,8 +29,15 @@ const els = {
 document.querySelector("#run-propose").addEventListener("click", runPropose);
 document.querySelector("#run-review").addEventListener("click", runReview);
 document.querySelector("#run-apply").addEventListener("click", runApply);
+document.querySelector("#run-cohort").addEventListener("click", runCohort);
 document.querySelector("#load-yaml").addEventListener("click", loadYaml);
 document.querySelector("#save-yaml").addEventListener("click", saveYaml);
+document.querySelector("#load-cohort-yaml").addEventListener("click", loadCohortYaml);
+document.querySelector("#save-cohort-copy").addEventListener("click", saveCohortCopy);
+els.cohortPicker.addEventListener("change", () => selectCohortDefinition().catch((error) => log(error.message || String(error), "error")));
+els.cohortYamlEditor.addEventListener("input", () => {
+  state.cohortYamlDirty = true;
+});
 
 document.querySelectorAll("[data-tab]").forEach((button) => {
   button.addEventListener("click", () => selectTab(button.dataset.tab));
@@ -34,11 +49,38 @@ async function boot() {
   try {
     const health = await getJson("/health");
     els.health.textContent = `API locale ${health.version}`;
+    await loadCohortCatalog();
     log("API prete");
   } catch (error) {
     els.health.textContent = "API indisponible";
     els.health.className = "status-error";
   }
+}
+
+async function loadCohortCatalog() {
+  const payload = await getJson("/api/cohorts");
+  const cohorts = payload.cohorts || [];
+  els.cohortPicker.innerHTML = cohorts.map((cohort) => `
+    <option value="${escapeHtml(cohort.path)}">${escapeHtml(cohort.name)} (${escapeHtml(cohort.schema_version)})</option>
+  `).join("");
+  if (cohorts.length) {
+    const selected = cohorts.find((cohort) => cohort.path === els.cohortDefinitionPath.value) || cohorts[0];
+    els.cohortPicker.value = selected.path;
+    setCohortDefinition(selected.path);
+    await loadCohortYaml();
+  }
+}
+
+async function selectCohortDefinition() {
+  setCohortDefinition(els.cohortPicker.value);
+  await loadCohortYaml();
+}
+
+function setCohortDefinition(path) {
+  els.cohortDefinitionPath.value = path;
+  const stem = path.split("/").pop().replace(/\.ya?ml$/i, "");
+  els.cohortReportPath.value = `${els.workdirPath.value}/cohort_${stem}.json`;
+  els.cohortHtmlPath.value = `${els.workdirPath.value}/cohort_${stem}.html`;
 }
 
 async function runPropose() {
@@ -90,10 +132,49 @@ async function runApply() {
       exports: els.exportsPath.value,
       out: els.outputPath.value,
     });
-    renderQuality(state.applied.summary);
+    await renderQuality(state.applied);
     selectTab("quality");
     log("Tables generees");
   });
+}
+
+async function runCohort() {
+  withBusy("#run-cohort", async () => {
+    if (state.cohortYamlDirty) {
+      await saveCohortCopy();
+    }
+    state.cohort = await postJson("/api/cohort/evaluate", {
+      tables: els.outputPath.value,
+      definition: els.cohortDefinitionPath.value,
+      out: els.cohortReportPath.value,
+      html_out: els.cohortHtmlPath.value,
+    });
+    await renderCohort();
+    selectTab("cohort");
+    log(`Cohorte ${state.cohort.summary.feasibility_status}`);
+  });
+}
+
+async function loadCohortYaml() {
+  const path = els.cohortDefinitionPath.value;
+  const artifact = await getJson(`/api/artifact?path=${encodeURIComponent(path)}`);
+  els.cohortYamlPath.textContent = artifact.path;
+  els.cohortYamlEditor.value = artifact.content;
+  state.cohortYamlDirty = false;
+}
+
+async function saveCohortCopy() {
+  const current = els.cohortDefinitionPath.value.split("/").pop().replace(/\.ya?ml$/i, "");
+  const original = current.endsWith("_edited") ? current.slice(0, -7) : current;
+  const path = `${els.workdirPath.value}/${original}_edited.yaml`;
+  await postJson("/api/artifact", { path, content: els.cohortYamlEditor.value });
+  els.cohortDefinitionPath.value = path;
+  els.cohortYamlPath.textContent = path;
+  const stem = path.split("/").pop().replace(/\.ya?ml$/i, "");
+  els.cohortReportPath.value = `${els.workdirPath.value}/cohort_${stem}.json`;
+  els.cohortHtmlPath.value = `${els.workdirPath.value}/cohort_${stem}.html`;
+  state.cohortYamlDirty = false;
+  log("Copie cohorte sauvee");
 }
 
 async function loadYaml() {
@@ -127,6 +208,7 @@ function updateFromPropose() {
   });
   renderSources();
   renderProfiles();
+  renderJoins();
   renderSuggestions();
   renderReview();
 }
@@ -194,6 +276,45 @@ function renderReview() {
   }).join("");
 }
 
+async function renderJoins() {
+  if (!state.artifacts.join_rules) {
+    document.querySelector("#join-rows").innerHTML = "";
+    return;
+  }
+  const artifact = await getJson(`/api/artifact?path=${encodeURIComponent(state.artifacts.join_rules)}`);
+  const rules = JSON.parse(artifact.content);
+  const reviewRules = rules.filter((rule) => rule.status === "a_revoir");
+  const autoRules = rules.filter((rule) => rule.status === "auto_validable");
+  const avgConfidence = rules.length
+    ? rules.reduce((total, rule) => total + Number(rule.confidence_score || 0), 0) / rules.length
+    : 0;
+  const rawUrl = `/api/artifact/raw?path=${encodeURIComponent(state.artifacts.join_rules)}`;
+
+  document.querySelector("#join-total").textContent = rules.length;
+  document.querySelector("#join-review").textContent = reviewRules.length;
+  document.querySelector("#join-auto").textContent = autoRules.length;
+  document.querySelector("#join-confidence").textContent = avgConfidence.toFixed(2);
+  document.querySelector("#join-json-link").href = rawUrl;
+  document.querySelector("#count-joins").textContent = rules.length;
+  markStep("joins", reviewRules.length ? "warn" : "done");
+
+  document.querySelector("#join-rows").innerHTML = rules.map((rule) => {
+    const primary = rule.primary || rule.left || {};
+    const foreign = rule.foreign || rule.right || {};
+    return `
+      <tr>
+        <td>${escapeHtml(rule.key_role || rule.join_type)}</td>
+        <td>${escapeHtml(formatJoinSide(primary))}</td>
+        <td>${escapeHtml(formatJoinSide(foreign))}</td>
+        <td>${escapeHtml(rule.cardinality)}</td>
+        <td class="${rule.status === "a_revoir" ? "status-warn" : "status-ok"}">${escapeHtml(rule.status)}</td>
+        <td>${Number(rule.confidence_score || 0).toFixed(2)}</td>
+        <td>${escapeHtml(rule.rationale)}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
 async function renderSuggestions() {
   const count = state.proposed?.summary?.learning_suggestions || 0;
   if (!count) {
@@ -214,9 +335,29 @@ async function renderSuggestions() {
   document.querySelector("#suggestion-rows").innerHTML = rows.join("");
 }
 
-function renderQuality(summary) {
+async function renderQuality(applied) {
+  const artifact = await getJson(`/api/artifact?path=${encodeURIComponent(applied.artifacts.quality)}`);
+  const report = JSON.parse(artifact.content);
+  const summary = report.summary || {};
+  const rules = report.rules || [];
   const generated = summary.generated_tables || {};
-  document.querySelector("#quality-rows").innerHTML = Object.entries(generated).map(([table, count]) => `
+  const failedRules = rules.filter((rule) => rule.status !== "passed");
+  const rawUrl = `/api/artifact/raw?path=${encodeURIComponent(applied.artifacts.quality)}`;
+
+  document.querySelector("#quality-generated").textContent = Object.keys(generated).length;
+  document.querySelector("#quality-rules").textContent = rules.length;
+  document.querySelector("#quality-failed").textContent = failedRules.length;
+  document.querySelector("#quality-s4").textContent = summary.blocked_fields_count || 0;
+  document.querySelector("#quality-json-link").href = rawUrl;
+
+  document.querySelector("#quality-rows").innerHTML = rules.length ? rules.map((rule) => `
+    <tr>
+      <td>${escapeHtml(rule.rule)}</td>
+      <td class="${rule.status === "passed" ? "status-ok" : "status-warn"}">${escapeHtml(rule.status)}</td>
+      <td>${escapeHtml(rule.severity)}</td>
+      <td>${escapeHtml(rule.message)}</td>
+    </tr>
+  `).join("") : Object.entries(generated).map(([table, count]) => `
     <tr>
       <td>${escapeHtml(table)}</td>
       <td class="status-ok">generated</td>
@@ -224,8 +365,56 @@ function renderQuality(summary) {
       <td>${count} lignes</td>
     </tr>
   `).join("");
-  document.querySelector("#count-quality").textContent = Object.keys(generated).length;
-  markStep("quality", "done");
+  document.querySelector("#count-quality").textContent = failedRules.length;
+  markStep("quality", failedRules.length ? "warn" : "done");
+}
+
+async function renderCohort() {
+  const summary = state.cohort.summary;
+  const diagnostics = state.cohort.feasibility?.diagnostics || [];
+  const events = state.cohort.longitudinal?.events || [];
+  const steps = state.cohort.steps || [];
+  const rawUrl = `/api/artifact/raw?path=${encodeURIComponent(state.cohort.artifacts.report_html)}`;
+
+  document.querySelector("#cohort-status").textContent = summary.feasibility_status;
+  document.querySelector("#cohort-source").textContent = summary.source_population_count;
+  document.querySelector("#cohort-included").textContent = summary.included_count;
+  document.querySelector("#cohort-diagnostics").textContent = summary.diagnostics_count;
+  document.querySelector("#metric-cohort").textContent = summary.included_count;
+  document.querySelector("#count-cohort").textContent = summary.included_count;
+  document.querySelector("#cohort-html-link").href = rawUrl;
+
+  document.querySelector("#cohort-step-rows").innerHTML = steps.map((step) => `
+    <tr>
+      <td>${escapeHtml(step.id)}</td>
+      <td>${escapeHtml(step.label)}</td>
+      <td>${escapeHtml(step.input_count ?? "")}</td>
+      <td>${escapeHtml(step.output_count)}</td>
+      <td>${escapeHtml(step.excluded_count)}</td>
+      <td>${escapeHtml(step.matched_pairs_count ?? "")}</td>
+    </tr>
+  `).join("");
+
+  document.querySelector("#cohort-diagnostic-rows").innerHTML = diagnostics.length ? diagnostics.map((item) => `
+    <tr>
+      <td>${escapeHtml(item.code)}</td>
+      <td class="${item.severity === "blocking" ? "status-error" : "status-warn"}">${escapeHtml(item.severity)}</td>
+      <td>${escapeHtml(item.message)}</td>
+    </tr>
+  `).join("") : `<tr><td colspan="3">Aucun diagnostic</td></tr>`;
+
+  document.querySelector("#cohort-event-rows").innerHTML = events.length ? events.map((event) => `
+    <tr>
+      <td>${escapeHtml(event.id)}</td>
+      <td>${escapeHtml(event.table)}</td>
+      <td>${escapeHtml(event.records_count)}</td>
+      <td>${escapeHtml(event.workers_count)}</td>
+    </tr>
+  `).join("") : `<tr><td colspan="4">Aucun evenement longitudinal</td></tr>`;
+
+  const artifact = await getJson(`/api/artifact?path=${encodeURIComponent(state.cohort.artifacts.report_html)}`);
+  els.cohortFrame.srcdoc = artifact.content;
+  markStep("cohort", summary.feasibility_status === "not_feasible" ? "warn" : "done");
 }
 
 function buildReviewDecisions() {
@@ -265,6 +454,11 @@ function buildReviewDecisions() {
   };
 }
 
+function formatJoinSide(side) {
+  if (!side.source_file && !side.column) return "";
+  return `${side.source_file || ""}::${side.column || ""}`;
+}
+
 function updateCounts({ sources, profiles, entities, reviewColumns, reviewValues, s4, joins, suggestions }) {
   if (sources !== undefined) document.querySelector("#count-sources").textContent = sources;
   if (profiles !== undefined) document.querySelector("#count-profiles").textContent = profiles;
@@ -284,7 +478,10 @@ function updateCounts({ sources, profiles, entities, reviewColumns, reviewValues
     markStep("review", total ? "warn" : "done");
   }
   if (s4 !== undefined) document.querySelector("#metric-s4").textContent = s4;
-  if (joins !== undefined) document.querySelector("#metric-joins").textContent = joins;
+  if (joins !== undefined) {
+    document.querySelector("#metric-joins").textContent = joins;
+    document.querySelector("#count-joins").textContent = joins;
+  }
   markStep("sources", "done");
   markStep("profile", "done");
   markStep("mapping", "done");

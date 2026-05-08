@@ -105,6 +105,7 @@ Livrables :
 - moteur de filtrage ;
 - séquences longitudinales simples entre événements datés ;
 - comptage par étape ;
+- diagnostics de faisabilité et rapport HTML ;
 - diagramme de flux ;
 - assistant de faisabilité ;
 - exemple "travailleurs de plus de 45 ans avec IRDP élevé en Auvergne".
@@ -218,7 +219,7 @@ Une première tranche industrialisée existe dans `src/mcdst` :
 - CLI `mcdst learning dataset/train/evaluate/suggest/predict` ;
 - option `mcdst mapping propose --learning-model` pour générer les suggestions avec le mapping ;
 - modules de profilage, sensibilité, graphe source, mapping, revue, dry-run et qualité ;
-- premier module de cohorte YAML avec comptages par étape et séquences longitudinales v0.2 ;
+- premier module de cohorte YAML avec comptages par étape, diagnostics, rapport HTML et séquences longitudinales v0.2 ;
 - premier modèle local TF-IDF/centroïdes pour assister le mapping de colonnes ;
 - test d'acceptation sur un lot synthétique multi-fichiers.
 

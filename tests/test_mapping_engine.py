@@ -38,6 +38,12 @@ LONGITUDINAL_COHORT_FIXTURE = (
     / "cohorts"
     / "manutention_avant_restriction.yaml"
 )
+ARRET_REPRISE_COHORT_FIXTURE = (
+    Path(__file__).parent
+    / "fixtures"
+    / "cohorts"
+    / "arret_avant_visite_reprise.yaml"
+)
 FIXTURE_REVIEW_DECISIONS = Path(__file__).parent / "fixtures" / "mapping_poc_review_decisions.yaml"
 CANONICAL_EXPORT_FILES = (
     "export_01_individus.csv",
@@ -203,6 +209,7 @@ def test_cohort_engine_evaluates_longitudinal_yaml_definition(tmp_path):
     workdir = tmp_path / "work"
     output = tmp_path / "mcdst_tables"
     report_path = tmp_path / "cohort_report_v02.json"
+    html_path = tmp_path / "cohort_report_v02.html"
 
     proposed = propose_mapping_workdir(
         exports,
@@ -215,23 +222,65 @@ def test_cohort_engine_evaluates_longitudinal_yaml_definition(tmp_path):
     apply_review_workdir(workdir, decisions_path)
     apply_mapping_file(workdir / "mapping_valide.yaml", exports, output)
 
-    result = evaluate_cohort_definition(output, LONGITUDINAL_COHORT_FIXTURE, report_path)
+    result = evaluate_cohort_definition(output, LONGITUDINAL_COHORT_FIXTURE, report_path, html_path)
 
     assert result["cohort_name"] == "manutention_avant_restriction_2024"
     assert result["schema_version"] == "mcdst-cohort-v0.2"
     assert result["summary"]["feasibility_status"] == "feasible"
+    assert result["feasibility"]["status"] == "feasible"
+    assert result["feasibility"]["diagnostics"] == []
     assert result["summary"]["included_count"] == 1
     assert result["summary"]["longitudinal_sequences_count"] == 1
+    assert result["summary"]["diagnostics_count"] == 0
     assert result["summary"]["required_tables"] == [
         "conclusion_medicale",
         "exposition_professionnelle",
         "travailleur",
         "visite_sante_travail",
     ]
+    assert {event["id"]: event["records_count"] for event in result["longitudinal"]["events"]} == {
+        "exposition_manutention": 1,
+        "restriction_medicale": 2,
+    }
     assert [step["output_count"] for step in result["steps"]] == [4, 3, 1]
     assert result["steps"][-1]["id"] == "longitudinal:exposition_before_restriction"
     assert result["steps"][-1]["matched_pairs_count"] == 1
     assert report_path.exists()
+    assert "Rapport cohorte - manutention_avant_restriction_2024" in html_path.read_text(encoding="utf-8")
+
+
+def test_cohort_engine_evaluates_work_stop_before_return_visit(tmp_path):
+    exports = copy_fixture_exports(tmp_path / "exports")
+    workdir = tmp_path / "work"
+    output = tmp_path / "mcdst_tables"
+
+    proposed = propose_mapping_workdir(
+        exports,
+        workdir,
+        source_system="POC_SPSTI_MULTI_EXPORT",
+        schema_version="mcdst-v0.1",
+    )
+    decisions_path = workdir / "review_decisions.yaml"
+    write_yaml(decisions_path, approve_all_review_decisions(proposed["review_queue"]))
+    apply_review_workdir(workdir, decisions_path)
+    apply_mapping_file(workdir / "mapping_valide.yaml", exports, output)
+
+    result = evaluate_cohort_definition(output, ARRET_REPRISE_COHORT_FIXTURE)
+
+    assert result["cohort_name"] == "arret_avant_visite_reprise_2024"
+    assert result["summary"]["feasibility_status"] == "feasible"
+    assert result["summary"]["included_count"] == 1
+    assert result["summary"]["required_tables"] == [
+        "arret_travail",
+        "travailleur",
+        "visite_sante_travail",
+    ]
+    assert {event["id"]: event["records_count"] for event in result["longitudinal"]["events"]} == {
+        "arret_atmp_termine": 2,
+        "visite_reprise": 1,
+    }
+    assert [step["output_count"] for step in result["steps"]] == [4, 3, 1]
+    assert result["longitudinal"]["sequences"][0]["matched_pairs_count"] == 1
 
 
 def test_learning_dataset_export_from_reviewed_mapping(tmp_path):
@@ -527,6 +576,7 @@ def test_cohort_cli_evaluate(tmp_path):
     workdir = tmp_path / "work"
     output = tmp_path / "mcdst_tables"
     report_path = tmp_path / "cohort_report.json"
+    html_path = tmp_path / "cohort_report.html"
 
     proposed = propose_mapping_workdir(
         exports,
@@ -539,8 +589,21 @@ def test_cohort_cli_evaluate(tmp_path):
     apply_review_workdir(workdir, decisions_path)
     apply_mapping_file(workdir / "mapping_valide.yaml", exports, output)
 
-    assert main(["cohort", "evaluate", str(COHORT_FIXTURE), "--tables", str(output), "--out", str(report_path)]) == 0
+    assert main(
+        [
+            "cohort",
+            "evaluate",
+            str(COHORT_FIXTURE),
+            "--tables",
+            str(output),
+            "--out",
+            str(report_path),
+            "--html-out",
+            str(html_path),
+        ]
+    ) == 0
     assert report_path.exists()
+    assert html_path.exists()
 
 
 def test_learning_cli_dataset(tmp_path):
@@ -657,9 +720,28 @@ def test_mapping_api_roundtrip(tmp_path):
     with running_api() as base_url:
         health = api_get(f"{base_url}/health")
         assert health["status"] == "ok"
-        assert "MCD-ST" in api_get_text(f"{base_url}/")
-        assert "runPropose" in api_get_text(f"{base_url}/web/app.js")
+        index_html = api_get_text(f"{base_url}/")
+        app_js = api_get_text(f"{base_url}/web/app.js")
+        assert "MCD-ST" in index_html
+        assert "view-cohort" in index_html
+        assert "view-joins" in index_html
+        assert "cohort-picker" in index_html
+        assert "cohort-yaml-editor" in index_html
+        assert "quality-json-link" in index_html
+        assert "join-json-link" in index_html
+        assert "runPropose" in app_js
+        assert "runCohort" in app_js
+        assert "loadCohortCatalog" in app_js
+        assert "saveCohortCopy" in app_js
+        assert "failedRules" in app_js
+        assert "renderJoins" in app_js
         registry_path = tmp_path / "api_registry.yaml"
+        cohort_catalog = api_get(f"{base_url}/api/cohorts")
+        assert {cohort["name"] for cohort in cohort_catalog["cohorts"]} >= {
+            "manutention_avant_restriction_2024",
+            "arret_avant_visite_reprise_2024",
+        }
+        assert any(cohort["schema_version"] == "mcdst-cohort-v0.2" for cohort in cohort_catalog["cohorts"])
 
         proposed = api_post(
             f"{base_url}/api/mapping/propose",
@@ -679,6 +761,9 @@ def test_mapping_api_roundtrip(tmp_path):
         assert proposed["summary"]["registry_column_mappings"] == 0
         assert proposed["summary"]["learning_suggestions"] == 0
         assert (workdir / "mapping_propose.yaml").exists()
+        join_rules_raw = api_get_text(f"{base_url}/api/artifact/raw?path={workdir / 'join_rules.json'}")
+        assert "primary_foreign_key" in join_rules_raw
+        assert "a_revoir" in join_rules_raw
 
         artifact = api_get(f"{base_url}/api/artifact?path={workdir / 'mapping_propose.yaml'}")
         assert "mapping_id:" in artifact["content"]
@@ -734,20 +819,30 @@ def test_mapping_api_roundtrip(tmp_path):
         assert applied["summary"]["generated_tables"]["travailleur"] == 4
         assert applied["summary"]["generated_tables"]["examen_complementaire"] == 4
         assert (output / "quality_report.json").exists()
+        assert "required_mapping:travailleur" in api_get_text(
+            f"{base_url}/api/artifact/raw?path={output / 'quality_report.json'}"
+        )
 
         cohort_report = tmp_path / "cohort_report.json"
+        cohort_report_html = tmp_path / "cohort_report.html"
         cohort = api_post(
             f"{base_url}/api/cohort/evaluate",
             {
                 "tables": str(output),
                 "definition": str(COHORT_FIXTURE),
                 "out": str(cohort_report),
+                "html_out": str(cohort_report_html),
             },
         )
         assert cohort["status"] == "evaluated"
         assert cohort["summary"]["included_count"] == 1
+        assert cohort["summary"]["diagnostics_count"] == 0
+        assert cohort["feasibility"]["status"] == "feasible"
         assert cohort["steps"][-1]["id"] == "criteria:exposure"
         assert cohort_report.exists()
+        assert cohort_report_html.exists()
+        assert cohort["artifacts"]["report_html"] == str(cohort_report_html)
+        assert "Rapport cohorte" in api_get_text(f"{base_url}/api/artifact/raw?path={cohort_report_html}")
 
         missing = api_get_error(f"{base_url}/api/mapping/review-queue")
         assert missing["status"] == "error"

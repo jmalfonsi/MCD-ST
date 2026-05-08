@@ -1,0 +1,24 @@
+name: arret_avant_visite_reprise_2024
+reference_year: 2026
+population:
+  min_age: 45
+longitudinal:
+  events:
+    arret_atmp_termine:
+      table: arret_travail
+      date_field: date_fin
+      filters:
+        lie_atmp_flag: true
+    visite_reprise:
+      table: visite_sante_travail
+      date_field: date_visite
+      filters:
+        type_visite_concept_id: REPRISE
+  sequences:
+    - id: arret_before_reprise
+      label: Arrêt AT/MP terminé avant visite de reprise
+      first: arret_atmp_termine
+      then: visite_reprise
+      relation: before
+      min_days: 0
+      max_days: 30

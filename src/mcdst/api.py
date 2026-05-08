@@ -14,6 +14,7 @@ from mcdst.registry import DEFAULT_REGISTRY_PATH
 from mcdst.utils import read_yaml, write_yaml
 
 WEB_DIR = Path(__file__).parent / "web"
+DEFAULT_COHORTS_DIR = Path("tests/fixtures/cohorts")
 CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
     ".css": "text/css; charset=utf-8",
@@ -55,10 +56,20 @@ class MCDSTRequestHandler(BaseHTTPRequestHandler):
                 path = required_query_path(params, "path")
                 self.send_json({"path": str(path), "content": path.read_text(encoding="utf-8")})
                 return
+            if route.path == "/api/artifact/raw":
+                params = parse_qs(route.query)
+                path = required_query_path(params, "path")
+                self.send_file_artifact(path)
+                return
             if route.path == "/api/mapping/review-queue":
                 params = parse_qs(route.query)
                 workdir = required_query_path(params, "workdir")
                 self.send_json(read_yaml(workdir / "review_queue.yaml"))
+                return
+            if route.path == "/api/cohorts":
+                params = parse_qs(route.query)
+                cohorts_dir = optional_query_path(params, "dir", DEFAULT_COHORTS_DIR)
+                self.send_json({"cohorts": list_cohort_definitions(cohorts_dir)})
                 return
             self.send_error_json(HTTPStatus.NOT_FOUND, f"Unknown endpoint: {route.path}")
         except Exception as exc:
@@ -173,15 +184,19 @@ class MCDSTRequestHandler(BaseHTTPRequestHandler):
         tables = required_path(payload, "tables")
         definition = required_path(payload, "definition")
         output = optional_path(payload, "out")
-        result = evaluate_cohort_definition(tables, definition, output)
+        html_output = optional_path(payload, "html_out")
+        result = evaluate_cohort_definition(tables, definition, output, html_output)
         self.send_json(
             {
                 "status": "evaluated",
                 "summary": result["summary"],
+                "feasibility": result["feasibility"],
+                "longitudinal": result["longitudinal"],
                 "steps": result["steps"],
                 "artifacts": {
                     "definition": str(definition),
                     "report": str(output) if output else None,
+                    "report_html": str(html_output) if html_output else None,
                 },
             }
         )
@@ -208,6 +223,17 @@ class MCDSTRequestHandler(BaseHTTPRequestHandler):
         body = resolved.read_bytes()
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", CONTENT_TYPES.get(resolved.suffix, "application/octet-stream"))
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def send_file_artifact(self, path: Path) -> None:
+        if not path.is_file():
+            self.send_error_json(HTTPStatus.NOT_FOUND, "Artifact not found.")
+            return
+        body = path.read_bytes()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", CONTENT_TYPES.get(path.suffix, "application/octet-stream"))
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -252,6 +278,25 @@ def count_pending_value_mappings(groups: list[dict]) -> int:
     )
 
 
+def list_cohort_definitions(directory: Path) -> list[dict[str, Any]]:
+    if not directory.exists():
+        return []
+    cohorts = []
+    for path in sorted(directory.glob("*.yaml")):
+        definition = read_yaml(path) or {}
+        longitudinal = definition.get("longitudinal", {}) or {}
+        cohorts.append(
+            {
+                "name": definition.get("name", path.stem),
+                "path": str(path),
+                "schema_version": "mcdst-cohort-v0.2" if longitudinal.get("sequences") else "mcdst-cohort-v0.1",
+                "events_count": len(longitudinal.get("events", {}) or {}),
+                "sequences_count": len(longitudinal.get("sequences", []) or []),
+            }
+        )
+    return cohorts
+
+
 def required_path(payload: dict[str, Any], key: str) -> Path:
     value = payload.get(key)
     if not value:
@@ -270,4 +315,11 @@ def required_query_path(params: dict[str, list[str]], key: str) -> Path:
     value = params.get(key, [""])[0]
     if not value:
         raise ValueError(f"Missing required query parameter: {key}")
+    return Path(value)
+
+
+def optional_query_path(params: dict[str, list[str]], key: str, default: Path) -> Path:
+    value = params.get(key, [""])[0]
+    if not value:
+        return default
     return Path(value)

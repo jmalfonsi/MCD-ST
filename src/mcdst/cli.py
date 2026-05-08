@@ -73,6 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("definition", type=Path, help="Cohort YAML definition")
     evaluate.add_argument("--tables", type=Path, required=True, help="Directory containing MCD-ST CSV tables")
     evaluate.add_argument("--out", type=Path, help="Optional JSON report output path")
+    evaluate.add_argument("--html-out", type=Path, help="Optional HTML report output path")
     evaluate.set_defaults(func=cmd_cohort_evaluate)
 
     learning = subparsers.add_parser("learning", help="Learning dataset and model commands")
@@ -174,17 +175,20 @@ def cmd_mapping_apply(args: argparse.Namespace) -> int:
 
 
 def cmd_cohort_evaluate(args: argparse.Namespace) -> int:
-    result = evaluate_cohort_definition(args.tables, args.definition, args.out)
+    result = evaluate_cohort_definition(args.tables, args.definition, args.out, args.html_out)
     summary = result["summary"]
     print(f"cohort:          {result['cohort_name']}")
     print(f"status:          {summary['feasibility_status']}")
     print(f"source:          {summary['source_population_count']}")
     print(f"included:        {summary['included_count']}")
     print(f"excluded:        {summary['excluded_count']}")
+    print(f"diagnostics:     {summary['diagnostics_count']}")
     if summary["missing_tables"]:
         print(f"missing_tables:  {', '.join(summary['missing_tables'])}")
     if args.out:
         print(f"report:          {args.out}")
+    if args.html_out:
+        print(f"report_html:     {args.html_out}")
     return 0
 
 

@@ -81,7 +81,45 @@ Quand une définition contient `longitudinal.sequences`, le rapport indique :
 
 - `schema_version: mcdst-cohort-v0.2` ;
 - `summary.longitudinal_sequences_count` ;
+- `feasibility.status` et `feasibility.diagnostics` ;
+- `longitudinal.events` avec le nombre d'événements et de travailleurs trouvés ;
+- `longitudinal.sequences` avec les paires temporelles trouvées ;
 - une étape `longitudinal:<id>` par séquence ;
 - `matched_pairs_count`, c'est-à-dire le nombre de couples d'événements trouvés.
 
 La compatibilité v0.1 est conservée pour les cohortes sans bloc longitudinal.
+
+## Diagnostics
+
+Les diagnostics de faisabilité distinguent :
+
+- `missing_table` : table MCD-ST requise absente, bloquant ;
+- `missing_field` : champ requis absent, bloquant ;
+- `empty_table` : table disponible mais sans ligne, avertissement ;
+- `empty_event` : aucun événement ne correspond à une définition, avertissement ;
+- `temporal_no_match` : les événements existent mais aucune paire ne respecte la
+  relation temporelle, avertissement.
+
+Le statut global est :
+
+- `not_feasible` si un diagnostic bloquant existe ;
+- `feasible_empty` si la définition est exécutable mais ne retient aucun
+  travailleur ;
+- `feasible` si la cohorte est exécutable et retient au moins un travailleur, ou
+  si la population source est vide.
+
+## Rapport HTML
+
+La CLI peut produire un rapport HTML en plus du JSON :
+
+```bash
+mcdst cohort evaluate \
+  tests/fixtures/cohorts/arret_avant_visite_reprise.yaml \
+  --tables work/mapping_fixture/mcdst_tables \
+  --out work/mapping_fixture/cohort_report.json \
+  --html-out work/mapping_fixture/cohort_report.html
+```
+
+Le rapport HTML reprend les métriques, les étapes, les diagnostics, la
+disponibilité des tables, les événements longitudinaux, les séquences et les
+travailleurs inclus.

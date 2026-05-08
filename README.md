@@ -89,7 +89,8 @@ MCD-ST générées et produit un rapport JSON avec les comptages par étape :
 .env/bin/mcdst cohort evaluate \
   tests/fixtures/cohorts/travailleurs_45_plus_manutention.yaml \
   --tables work/mapping_fixture/mcdst_tables \
-  --out work/mapping_fixture/cohort_report.json
+  --out work/mapping_fixture/cohort_report.json \
+  --html-out work/mapping_fixture/cohort_report.html
 ```
 
 Une première extension longitudinale v0.2 permet aussi d'exprimer un ordre entre
@@ -99,7 +100,19 @@ Une première extension longitudinale v0.2 permet aussi d'exprimer un ordre entr
 .env/bin/mcdst cohort evaluate \
   tests/fixtures/cohorts/manutention_avant_restriction.yaml \
   --tables work/mapping_fixture/mcdst_tables \
-  --out work/mapping_fixture/cohort_report_v02.json
+  --out work/mapping_fixture/cohort_report_v02.json \
+  --html-out work/mapping_fixture/cohort_report_v02.html
+```
+
+Un second cas métier longitudinal est disponible pour contrôler la séquence
+arrêt AT/MP terminé puis visite de reprise :
+
+```bash
+.env/bin/mcdst cohort evaluate \
+  tests/fixtures/cohorts/arret_avant_visite_reprise.yaml \
+  --tables work/mapping_fixture/mcdst_tables \
+  --out work/mapping_fixture/cohort_arret_reprise.json \
+  --html-out work/mapping_fixture/cohort_arret_reprise.html
 ```
 
 ## Dataset d'apprentissage mapping
@@ -176,14 +189,30 @@ Puis ouvrir :
 http://127.0.0.1:8765/
 ```
 
+Dans un IDE distant ou un environnement avec port forwarding, lancer plutôt :
+
+```bash
+.env/bin/mcdst serve --host 0.0.0.0 --port 8765
+```
+
+Puis ouvrir l'URL transférée par l'IDE pour le port `8765`.
+
 Endpoints disponibles :
 
 - `GET /health`
 - `GET /`
 - `GET /api/artifact?path=...`
+- `GET /api/artifact/raw?path=...`
+- `GET /api/cohorts`
 - `POST /api/artifact`
 - `POST /api/mapping/propose`
 - `GET /api/mapping/review-queue?workdir=...`
 - `POST /api/mapping/review`
 - `POST /api/mapping/apply`
 - `POST /api/cohort/evaluate`
+
+L'interface web propose les cohortes YAML synthétiques disponibles et renseigne
+automatiquement les chemins de rapports JSON/HTML dans le workdir courant.
+L'onglet Cohorte permet aussi d'éditer le YAML choisi ; les modifications sont
+sauvegardées comme copie dans le workdir avant exécution, afin de ne pas
+modifier les fixtures synthétiques versionnées.
