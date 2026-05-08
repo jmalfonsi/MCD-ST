@@ -18,7 +18,9 @@ from tests.support import (
     FIXTURE_EXPORTS,
     FIXTURE_REVIEW_DECISIONS,
     LONGITUDINAL_COHORT_FIXTURE,
+    S4_SOURCE_COLUMNS,
     SEMICOLON_CSV_FIXTURE,
+    SYNTHETIC_DIRECT_IDENTIFIER_VALUES,
     api_get,
     api_get_error,
     api_get_text,
@@ -37,6 +39,12 @@ from tests.support import (
 
 def test_mapping_poc_fixture_directory_contains_only_canonical_exports():
     assert tuple(sorted(path.name for path in FIXTURE_EXPORTS.glob("*.csv"))) == CANONICAL_EXPORT_FILES
+
+
+def test_mapping_poc_fixture_readme_declares_synthetic_data():
+    readme = (FIXTURE_EXPORTS / "README.md").read_text(encoding="utf-8").lower()
+    assert "synthetic" in readme
+    assert "stable acceptance fixture" in readme
 
 
 def test_mapping_engine_roundtrip(tmp_path):
@@ -103,6 +111,36 @@ def test_mapping_engine_roundtrip(tmp_path):
     ][0]
     assert join_resolution["status"] == "passed"
     assert "key values resolved through explicit join rules" in join_resolution["message"]
+
+
+def test_mapping_engine_excludes_direct_identifiers_from_standardized_tables(tmp_path):
+    exports = copy_fixture_exports(tmp_path / "exports")
+    workdir = tmp_path / "work"
+    output = tmp_path / "mcdst_tables"
+
+    proposed = propose_mapping_workdir(
+        exports,
+        workdir,
+        source_system="POC_SPSTI_MULTI_EXPORT",
+        schema_version="mcdst-v0.1",
+    )
+    blocked_columns = {field["column"] for field in proposed["mapping"]["blocked_fields"]}
+    assert S4_SOURCE_COLUMNS <= blocked_columns
+
+    decisions_path = workdir / "review_decisions.yaml"
+    write_yaml(decisions_path, approve_all_review_decisions(proposed["review_queue"]))
+    apply_review_workdir(workdir, decisions_path)
+    apply_mapping_file(workdir / "mapping_valide.yaml", exports, output)
+
+    standardized_content = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in output.glob("*.csv")
+        if path.name != "quality_report.json"
+    )
+    for column in S4_SOURCE_COLUMNS:
+        assert column not in standardized_content
+    for value in SYNTHETIC_DIRECT_IDENTIFIER_VALUES:
+        assert value not in standardized_content
 
 
 def test_mapping_engine_applies_value_review_decisions(tmp_path):

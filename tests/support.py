@@ -49,6 +49,21 @@ CANONICAL_EXPORT_FILES = (
     "export_08_vaccinations.csv",
     "export_09_duerp.csv",
 )
+S4_SOURCE_COLUMNS = {"NomUsuel", "Prenom", "TelPortable"}
+SYNTHETIC_DIRECT_IDENTIFIER_VALUES = {
+    "Martin",
+    "Aline",
+    "Bernard",
+    "Karim",
+    "Dubois",
+    "Nadia",
+    "Leroy",
+    "Marc",
+    "0600000001",
+    "0600000002",
+    "0600000003",
+    "0600000004",
+}
 MAPPING_CONTRACT_KEYS = {
     "mapping_id",
     "source_system",

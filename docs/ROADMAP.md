@@ -221,7 +221,9 @@ Une première tranche industrialisée existe dans `src/mcdst` :
 - modules de profilage, sensibilité, graphe source, mapping, revue, dry-run et qualité ;
 - premier module de cohorte YAML avec comptages par étape, diagnostics, rapport HTML et séquences longitudinales v0.2 ;
 - premier modèle local TF-IDF/centroïdes pour assister le mapping de colonnes ;
-- test d'acceptation sur un lot synthétique multi-fichiers.
+- tests d'acceptation sur un lot synthétique multi-fichiers ;
+- garde-fou de test vérifiant que les identifiants directs synthétiques S4 ne sortent pas dans les tables MCD-ST standardisées ;
+- CI GitHub exécutant la suite `pytest` sur Python 3.11 et 3.12.
 
 ## Priorité immédiate
 
@@ -235,3 +237,5 @@ La prochaine action concrète est de consolider ce moteur MVP :
 6. apprendre des validations humaines ; registre local `mapping_registry.yaml` ajouté pour réutiliser les mappings validés ;
 7. produire un dataset puis un premier modèle local de suggestions ; `learning dataset/train/evaluate/suggest` ajoutés ;
 8. brancher le modèle sur le flux de proposition ; option CLI/API/web ajoutée.
+9. rendre la reproductibilité vérifiable en CI ; workflow GitHub Actions ajouté.
+10. renforcer les garde-fous RGPD de fixtures ; test d'exclusion des identifiants directs S4 ajouté.
